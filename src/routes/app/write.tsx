@@ -73,6 +73,98 @@ const loadEntryFn = createServerFn()
     return rows.length > 0 ? String(rows[0].content) : "";
   });
 
+/**
+ * Recompute and persist streak data after an entry is saved.
+ * Fetches all distinct calendar dates for the user from the entries table,
+ * computes the current streak (consecutive days ending today or yesterday)
+ * and longest streak ever, then upserts the streaks table.
+ */
+const updateStreakFn = createServerFn()
+  .validator((data: unknown) => {
+    const d = data as { userId: string };
+    if (!d.userId) throw new Error("Invalid user ID");
+    return d;
+  })
+  .handler(async ({ data }) => {
+    const db = sql();
+
+    // Fetch all distinct calendar dates for this user
+    const rows = await db`
+      SELECT DISTINCT created_at::date AS entry_date
+      FROM entries
+      WHERE user_id = ${data.userId}
+      ORDER BY entry_date DESC
+    `;
+
+    const dateSet = new Set<string>();
+    for (const r of rows as { entry_date: string }[]) {
+      const d = typeof r.entry_date === "string" ? r.entry_date : String(r.entry_date);
+      dateSet.add(d.slice(0, 10));
+    }
+
+    // --- Compute current streak ---
+    // Count consecutive days ending today or yesterday
+    let currentStreak = 0;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // Check today first, then walk backwards
+    const checkDate = new Date(today);
+    // If today has no entry, try starting from yesterday
+    let started = false;
+
+    for (let i = 0; i < 366; i++) {
+      const dateStr = checkDate.toISOString().split("T")[0];
+      if (dateSet.has(dateStr)) {
+        currentStreak++;
+        started = true;
+      } else if (started) {
+        // Streak broken
+        break;
+      }
+      // If we haven't started yet (i === 0 and no entry today),
+      // try yesterday on the next iteration
+      checkDate.setDate(checkDate.getDate() - 1);
+      if (!started && i >= 1) break; // gave up after checking yesterday
+    }
+
+    // --- Compute longest streak ---
+    let longestStreak = 0;
+    if (dateSet.size > 0) {
+      const sortedDates = [...dateSet].sort();
+      let runLength = 1;
+      longestStreak = 1;
+
+      for (let i = 1; i < sortedDates.length; i++) {
+        const prev = new Date(sortedDates[i - 1] + "T00:00:00");
+        const curr = new Date(sortedDates[i] + "T00:00:00");
+        const diffDays =
+          (curr.getTime() - prev.getTime()) / (1000 * 60 * 60 * 24);
+
+        if (diffDays === 1) {
+          runLength++;
+          longestStreak = Math.max(longestStreak, runLength);
+        } else {
+          runLength = 1;
+        }
+      }
+    }
+
+    // --- Persist streak ---
+    const todayStr = today.toISOString().split("T")[0];
+    await db`
+      INSERT INTO streaks (user_id, current_streak, longest_streak, last_entry_date)
+      VALUES (${data.userId}, ${currentStreak}, ${longestStreak}, ${todayStr}::date)
+      ON CONFLICT (user_id)
+      DO UPDATE SET
+        current_streak = ${currentStreak},
+        longest_streak = GREATEST(streaks.longest_streak, ${longestStreak}),
+        last_entry_date = ${todayStr}::date
+    `;
+
+    return { current_streak: currentStreak, longest_streak: longestStreak };
+  });
+
 // ---------------------------------------------------------------------------
 // Route
 // ---------------------------------------------------------------------------
@@ -160,6 +252,10 @@ function WriteContent() {
           await saveEntryFn({
             data: { userId, day: today, content: text },
           });
+          // Update streaks after successful save
+          updateStreakFn({ data: { userId } }).catch((err) =>
+            console.error("Streak update failed:", err),
+          );
           setSaveStatus("saved");
           // Fade back to idle after 2 s
           setTimeout(() => setSaveStatus("idle"), 2000);
