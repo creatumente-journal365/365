@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { SignedIn, SignedOut, useAuth, useUser, UserButton } from "@clerk/tanstack-start";
 import { createServerFn } from "@tanstack/react-start";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { sql } from "~/db/index";
 
 // ---------------------------------------------------------------------------
@@ -53,6 +53,115 @@ const getEntryDatesFn = createServerFn()
       return d.slice(0, 10);
     });
   });
+
+// ---------------------------------------------------------------------------
+// Push notification server functions
+// ---------------------------------------------------------------------------
+
+/** Get the push subscription status for the current user. */
+const getPushSubFn = createServerFn()
+  .validator((data: unknown) => {
+    const d = data as { userId: string };
+    if (!d.userId) throw new Error("Invalid user ID");
+    return d;
+  })
+  .handler(async ({ data }) => {
+    const db = sql();
+    const rows = await db`
+      SELECT reminder_time FROM push_subscriptions
+      WHERE user_id = ${data.userId}
+      LIMIT 1
+    `;
+    if (rows.length === 0) return null;
+    return { reminder_time: String(rows[0].reminder_time) };
+  });
+
+/** Subscribe to push notifications. Upserts the subscription. */
+const subscribePushFn = createServerFn()
+  .validator((data: unknown) => {
+    const d = data as {
+      userId: string;
+      endpoint: string;
+      p256dh: string;
+      auth: string;
+      reminder_time: string;
+    };
+    if (!d.userId || !d.endpoint || !d.p256dh || !d.auth || !d.reminder_time) {
+      throw new Error("Invalid subscription data");
+    }
+    return d;
+  })
+  .handler(async ({ data }) => {
+    const db = sql();
+    await db`
+      INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth, reminder_time)
+      VALUES (${data.userId}, ${data.endpoint}, ${data.p256dh}, ${data.auth}, ${data.reminder_time})
+      ON CONFLICT (user_id)
+      DO UPDATE SET
+        endpoint = ${data.endpoint},
+        p256dh = ${data.p256dh},
+        auth = ${data.auth},
+        reminder_time = ${data.reminder_time},
+        updated_at = now()
+    `;
+    return { success: true };
+  });
+
+/** Unsubscribe from push notifications. */
+const unsubscribePushFn = createServerFn()
+  .validator((data: unknown) => {
+    const d = data as { userId: string };
+    if (!d.userId) throw new Error("Invalid user ID");
+    return d;
+  })
+  .handler(async ({ data }) => {
+    const db = sql();
+    await db`
+      DELETE FROM push_subscriptions WHERE user_id = ${data.userId}
+    `;
+    return { success: true };
+  });
+
+/** Update only the reminder time. */
+const updateReminderTimeFn = createServerFn()
+  .validator((data: unknown) => {
+    const d = data as { userId: string; reminder_time: string };
+    if (!d.userId || !d.reminder_time) throw new Error("Invalid data");
+    return d;
+  })
+  .handler(async ({ data }) => {
+    const db = sql();
+    await db`
+      UPDATE push_subscriptions
+      SET reminder_time = ${data.reminder_time}, updated_at = now()
+      WHERE user_id = ${data.userId}
+    `;
+    return { success: true };
+  });
+
+// ---------------------------------------------------------------------------
+// Browser push notification helpers (client-side only)
+// ---------------------------------------------------------------------------
+
+const VAPID_PUBLIC_KEY =
+  (typeof import.meta !== "undefined" &&
+    (import.meta as Record<string, any>).env
+      ?.VITE_VAPID_PUBLIC_KEY as string) ??
+  "";
+
+/** Register (or re-activate) the service worker and return the registration. */
+async function getSWRegistration(): Promise<ServiceWorkerRegistration | null> {
+  if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) {
+    return null;
+  }
+  try {
+    const reg = await navigator.serviceWorker.getRegistration("/sw.js");
+    if (reg) return reg;
+    return await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+  } catch {
+    return null;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Route
@@ -259,6 +368,11 @@ function DashboardContent() {
           />
         </div>
 
+        {/* Notification settings */}
+        <div className="mt-12">
+          <NotificationSettings userId={userId} />
+        </div>
+
         {/* Quick start section */}
         <div className="mt-12 rounded-xl border border-dashed border-[#c88c32]/30 bg-[#f0d78c]/10 p-8 text-center">
           <h2 className="font-serif text-2xl font-semibold text-[#3d3929]">
@@ -399,4 +513,298 @@ function CalendarHeatmap({
       </div>
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Notification settings component
+// ---------------------------------------------------------------------------
+
+const REMINDER_HOURS = [
+  "06:00", "07:00", "08:00", "09:00", "10:00",
+  "12:00", "14:00", "16:00", "18:00", "20:00", "21:00", "22:00",
+];
+
+function NotificationSettings({ userId }: { userId: string }) {
+  const [status, setStatus] = useState<
+    "loading" | "unsupported" | "disabled" | "enabled"
+  >("loading");
+  const [reminderTime, setReminderTime] = useState("08:00");
+  const [saving, setSaving] = useState(false);
+  const [browserPermission, setBrowserPermission] =
+    useState<NotificationPermission>("default");
+
+  // Check current state on mount
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    // Check if browser supports notifications
+    if (!("Notification" in window) || !("serviceWorker" in navigator)) {
+      setStatus("unsupported");
+      return;
+    }
+
+    setBrowserPermission(Notification.permission);
+
+    if (!userId) return;
+
+    (async () => {
+      try {
+        const sub = await getPushSubFn({ data: { userId } });
+        if (sub) {
+          setStatus("enabled");
+          setReminderTime(sub.reminder_time);
+        } else {
+          setStatus("disabled");
+        }
+      } catch (err) {
+        console.error("Failed to load notification status:", err);
+        setStatus("disabled");
+      }
+    })();
+  }, [userId]);
+
+  // Enable notifications
+  const handleEnable = useCallback(async () => {
+    if (!userId || !VAPID_PUBLIC_KEY) return;
+    setSaving(true);
+
+    try {
+      // Request browser permission
+      const permission = await Notification.requestPermission();
+      setBrowserPermission(permission);
+
+      if (permission !== "granted") {
+        setSaving(false);
+        return;
+      }
+
+      // Register service worker
+      const swReg = await getSWRegistration();
+      if (!swReg) {
+        console.error("Could not register service worker");
+        setSaving(false);
+        return;
+      }
+
+      // Wait for SW to be ready
+      await navigator.serviceWorker.ready;
+
+      // Get push subscription
+      let pushSub = await swReg.pushManager.getSubscription();
+      if (!pushSub) {
+        pushSub = await swReg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+        });
+      }
+
+      const rawSub = pushSub.toJSON();
+      const endpoint = rawSub.endpoint ?? "";
+      const p256dh = (rawSub.keys as Record<string, string>)?.p256dh ?? "";
+      const auth = (rawSub.keys as Record<string, string>)?.auth ?? "";
+
+      await subscribePushFn({
+        data: {
+          userId,
+          endpoint,
+          p256dh,
+          auth,
+          reminder_time: reminderTime,
+        },
+      });
+
+      setStatus("enabled");
+    } catch (err) {
+      console.error("Failed to enable notifications:", err);
+    } finally {
+      setSaving(false);
+    }
+  }, [userId, reminderTime]);
+
+  // Disable notifications
+  const handleDisable = useCallback(async () => {
+    if (!userId) return;
+    setSaving(true);
+    try {
+      // Unsubscribe from push manager
+      const swReg = await getSWRegistration();
+      if (swReg) {
+        const pushSub = await swReg.pushManager.getSubscription();
+        if (pushSub) await pushSub.unsubscribe();
+      }
+
+      // Remove from DB
+      await unsubscribePushFn({ data: { userId } });
+      setStatus("disabled");
+    } catch (err) {
+      console.error("Failed to disable notifications:", err);
+    } finally {
+      setSaving(false);
+    }
+  }, [userId]);
+
+  // Update reminder time
+  const handleTimeChange = useCallback(
+    async (newTime: string) => {
+      setReminderTime(newTime);
+      if (!userId || status !== "enabled") return;
+      setSaving(true);
+      try {
+        await updateReminderTimeFn({
+          data: { userId, reminder_time: newTime },
+        });
+      } catch (err) {
+        console.error("Failed to update reminder time:", err);
+      } finally {
+        setSaving(false);
+      }
+    },
+    [userId, status],
+  );
+
+  return (
+    <div className="rounded-xl border border-[#3d3929]/10 bg-white p-6 shadow-sm">
+      <p className="font-sans text-xs font-medium uppercase tracking-widest text-[#c88c32]">
+        Daily Reminders
+      </p>
+
+      {status === "loading" ? (
+        <div className="mt-4 flex items-center gap-3">
+          <div className="h-5 w-5 animate-spin rounded-full border-2 border-[#c88c32] border-t-transparent" />
+          <span className="text-sm text-[#6b6757]">Loading…</span>
+        </div>
+      ) : status === "unsupported" ? (
+        <div className="mt-4">
+          <p className="text-sm text-[#6b6757]">
+            <span className="inline-block mr-1.5 text-base">🔕</span>
+            Browser notifications are not supported in your current browser.
+            Try Chrome, Edge, or Firefox on desktop or Android.
+          </p>
+        </div>
+      ) : status === "enabled" ? (
+        <div className="mt-4 space-y-4">
+          <div className="flex items-center gap-2">
+            <span className="inline-flex h-2 w-2 rounded-full bg-green-500" />
+            <span className="text-sm font-medium text-[#3d3929]">
+              Notifications enabled
+            </span>
+          </div>
+
+          {/* Reminder time picker */}
+          <div className="flex items-center gap-3">
+            <label
+              htmlFor="reminder-time"
+              className="text-sm text-[#6b6757] shrink-0"
+            >
+              Reminder at:
+            </label>
+            <select
+              id="reminder-time"
+              value={reminderTime}
+              onChange={(e) => handleTimeChange(e.target.value)}
+              disabled={saving}
+              className="rounded-lg border border-[#3d3929]/15 bg-white px-3 py-1.5 text-sm text-[#3d3929] focus:outline-none focus:ring-2 focus:ring-[#c88c32]/30"
+            >
+              {REMINDER_HOURS.map((h) => (
+                <option key={h} value={h}>
+                  {h}
+                </option>
+              ))}
+            </select>
+            <span className="text-xs text-[#6b6757]">UTC</span>
+          </div>
+
+          {/* Disable button */}
+          <button
+            type="button"
+            onClick={handleDisable}
+            disabled={saving}
+            className="rounded-lg border border-red-200 bg-white px-4 py-2 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50"
+          >
+            {saving ? "Updating…" : "Disable Notifications"}
+          </button>
+        </div>
+      ) : (
+        /* status === "disabled" */
+        <div className="mt-4 space-y-4">
+          {browserPermission === "denied" ? (
+            <div>
+              <p className="text-sm text-[#6b6757]">
+                <span className="inline-block mr-1.5 text-base">🚫</span>
+                Notifications are blocked in your browser settings. To enable
+                them, update your site permissions for this page.
+              </p>
+            </div>
+          ) : (
+            <>
+              <p className="text-sm text-[#6b6757]">
+                Get a daily browser notification to remind you to write in your
+                journal. Never miss a day.
+              </p>
+
+              {/* Reminder time picker (visible before enabling too) */}
+              <div className="flex items-center gap-3">
+                <label
+                  htmlFor="reminder-time-disabled"
+                  className="text-sm text-[#6b6757] shrink-0"
+                >
+                  Reminder at:
+                </label>
+                <select
+                  id="reminder-time-disabled"
+                  value={reminderTime}
+                  onChange={(e) => setReminderTime(e.target.value)}
+                  disabled={saving}
+                  className="rounded-lg border border-[#3d3929]/15 bg-white px-3 py-1.5 text-sm text-[#3d3929] focus:outline-none focus:ring-2 focus:ring-[#c88c32]/30"
+                >
+                  {REMINDER_HOURS.map((h) => (
+                    <option key={h} value={h}>
+                      {h}
+                    </option>
+                  ))}
+                </select>
+                <span className="text-xs text-[#6b6757]">UTC</span>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleEnable}
+                disabled={saving || !VAPID_PUBLIC_KEY}
+                className="inline-flex items-center gap-2 rounded-full bg-[#c88c32] px-6 py-2.5 font-sans text-sm font-semibold text-white transition-all hover:bg-[#a6731f] disabled:opacity-50"
+              >
+                {saving ? (
+                  <>
+                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                    Enabling…
+                  </>
+                ) : (
+                  <>
+                    <span aria-hidden="true">🔔</span>
+                    Enable Daily Reminder
+                  </>
+                )}
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Utility: convert base64url VAPID key to Uint8Array
+// ---------------------------------------------------------------------------
+
+function urlBase64ToUint8Array(base64String: string): Uint8Array {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding)
+    .replace(/-/g, "+")
+    .replace(/_/g, "/");
+  const rawData = atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; i++) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
 }

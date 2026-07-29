@@ -48,12 +48,28 @@ export async function setupDatabase(): Promise<void> {
       );
     `;
 
+    await db`
+      CREATE TABLE IF NOT EXISTS push_subscriptions (
+        id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id       TEXT UNIQUE NOT NULL,
+        endpoint      TEXT NOT NULL,
+        p256dh        TEXT NOT NULL,
+        auth          TEXT NOT NULL,
+        reminder_time TEXT NOT NULL DEFAULT '08:00',
+        created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+    `;
+
     // Index for fast lookups by user
     await db`
       CREATE INDEX IF NOT EXISTS idx_entries_user_id ON entries (user_id);
     `;
     await db`
       CREATE INDEX IF NOT EXISTS idx_entries_user_day ON entries (user_id, day);
+    `;
+    await db`
+      CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user_id ON push_subscriptions (user_id);
     `;
 
     console.log("Database tables verified/created successfully.");
