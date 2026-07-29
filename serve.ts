@@ -9,6 +9,16 @@
 // with an already-running server. Every sandbox user has passwordless sudo, so
 // the takeover works across user boundaries.
 import handler from "./dist/server/server.js";
+import { setupDatabase } from "./src/db/index.js";
+import { startNotificationScheduler } from "./src/notifications/scheduler.js";
+
+// Run database migration on startup
+try {
+  await setupDatabase();
+  console.log("Database setup complete.");
+} catch (err) {
+  console.warn("Database setup skipped (DB may not be connected yet):", err);
+}
 
 // Pinned, NOT read from the environment. The published preview URL
 // (<label>.<PUBLIC_SITE_DOMAIN>) is reverse-proxied to 0.0.0.0:3000 inside the
@@ -71,3 +81,10 @@ for (let attempt = 1; ; attempt++) {
 }
 
 console.log(`team-site serving on http://${HOST}:${String(PORT)}`);
+
+// Start the push notification scheduler for daily reminders
+try {
+  startNotificationScheduler();
+} catch (err) {
+  console.warn("Notification scheduler skipped (VAPID keys may not be configured):", err);
+}
