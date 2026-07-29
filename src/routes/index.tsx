@@ -1,7 +1,14 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { readFile, writeFile } from "node:fs/promises";
 import { useEffect, useState } from "react";
+import {
+  SignInButton,
+  SignUpButton,
+  SignedIn,
+  SignedOut,
+  UserButton,
+} from "@clerk/tanstack-start";
 
 // ---- Types ----
 interface Subscriber {
@@ -147,6 +154,38 @@ function Hero() {
         aria-hidden
         className="absolute -top-24 left-1/2 h-[500px] w-[800px] -translate-x-1/2 rounded-full bg-[#f0d78c]/20 blur-3xl"
       />
+
+      {/* Auth nav row */}
+      <div className="relative mx-auto flex max-w-3xl items-center justify-end gap-3 pb-4">
+        <SignedOut>
+          <SignInButton mode="modal">
+            <button className="font-sans text-sm font-medium text-[#6b6757] transition-colors hover:text-[#3d3929]">
+              Sign in
+            </button>
+          </SignInButton>
+          <SignUpButton mode="modal">
+            <button className="rounded-lg bg-[#c88c32] px-4 py-2 font-sans text-sm font-semibold text-white shadow-sm transition-all hover:bg-[#b07a28] active:scale-[0.98]">
+              Sign up
+            </button>
+          </SignUpButton>
+        </SignedOut>
+        <SignedIn>
+          <Link
+            to="/app"
+            className="font-sans text-sm font-medium text-[#c88c32] transition-colors hover:text-[#b07a28]"
+          >
+            Dashboard
+          </Link>
+          <UserButton
+            appearance={{
+              elements: {
+                avatarBox:
+                  "h-9 w-9 rounded-full ring-2 ring-[#c88c32]/30 hover:ring-[#c88c32]/60 transition-all",
+              },
+            }}
+          />
+        </SignedIn>
+      </div>
 
       <div className="relative mx-auto max-w-3xl text-center">
         <img

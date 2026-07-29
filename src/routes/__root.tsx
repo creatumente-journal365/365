@@ -1,3 +1,4 @@
+import { ClerkProvider } from "@clerk/tanstack-start";
 import {
   HeadContent,
   Outlet,
@@ -48,7 +49,11 @@ function RootDocument({ children }: { children: ReactNode }) {
         <HeadContent />
       </head>
       <body className="bg-[#fefcf5] text-[#3d3929] antialiased">
-        {children}
+        <ClerkProvider
+          publishableKey={import.meta.env.VITE_CLERK_PUBLISHABLE_KEY}
+        >
+          {children}
+        </ClerkProvider>
         <Scripts />
       </body>
     </html>
