@@ -2,7 +2,7 @@ import { neon } from "@neondatabase/serverless";
 
 /**
  * Server-only handle to the team's database (Neon serverless Postgres over HTTP).
- * The connection string comes from `DATABASE_URL`, which is injected into the
+ * The connection string comes from `NEON_DATABASE_URL`, which is injected into the
  * sandbox and passed to the live host on publish. Resolved lazily so the site
  * still builds and serves before a database is connected.
  *
@@ -10,10 +10,10 @@ import { neon } from "@neondatabase/serverless";
  * (never client code).
  */
 export const sql = () => {
-  const url = process.env.DATABASE_URL;
+  const url = process.env.NEON_DATABASE_URL;
   if (!url) {
     throw new Error(
-      "DATABASE_URL is not set — connect a database before running queries.",
+      "NEON_DATABASE_URL is not set — connect a database before running queries.",
     );
   }
   return neon(url);

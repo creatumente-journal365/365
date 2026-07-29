@@ -16,6 +16,11 @@ export const Route = createRootRoute({
       { name: "viewport", content: "width=device-width, initial-scale=1" },
       { title: "Journal 365 — A prompted journal with one writing prompt per day" },
       { name: "description", content: "Journal 365 eliminates the blank-page problem. One thoughtful prompt per day helps you build a daily writing habit that lasts." },
+      { property: "og:title", content: "Journal 365 — A prompted journal with one writing prompt per day" },
+      { property: "og:description", content: "365 prompts. One year. Your story. A prompted journal that eliminates the blank page — available as printable PDF, Notion template, or web app." },
+      { property: "og:type", content: "website" },
+      { property: "og:image", content: "/logo-wordmark.png" },
+      { name: "twitter:card", content: "summary" },
     ],
     links: [
       { rel: "stylesheet", href: appCss },
