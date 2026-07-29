@@ -122,8 +122,8 @@ const formats = [
     icon: "💻",
     name: "Web App",
     description:
-      "Daily prompts delivered in your browser. Track your streak, get reminders. Subscribe and never miss a day.",
-    pricing: "Subscription",
+      "Daily prompts delivered in your browser. Track your streak, get reminders. Free during beta — no credit card required.",
+    pricing: "Free during beta",
   },
 ];
 
@@ -208,13 +208,28 @@ function Hero() {
           format works for you — print it, sync it, or open it in your browser.
         </p>
 
-        <div className="mt-10">
+        <div className="mt-10 flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
           <a
-            href="#notify"
+            href="#formats"
             className="inline-block rounded-lg bg-[#c88c32] px-8 py-4 font-sans text-base font-semibold text-white shadow-md transition-all hover:bg-[#b07a28] hover:shadow-lg active:scale-[0.98]"
           >
-            Notify Me When It Launches
+            Get the PDF
           </a>
+          <SignedOut>
+            <SignUpButton mode="modal">
+              <button className="inline-block rounded-lg border-2 border-[#c88c32] bg-white px-8 py-4 font-sans text-base font-semibold text-[#c88c32] shadow-sm transition-all hover:bg-[#fef9f0] active:scale-[0.98]">
+                Try the free beta
+              </button>
+            </SignUpButton>
+          </SignedOut>
+          <SignedIn>
+            <Link
+              to="/app"
+              className="inline-block rounded-lg border-2 border-[#c88c32] bg-white px-8 py-4 font-sans text-base font-semibold text-[#c88c32] shadow-sm transition-all hover:bg-[#fef9f0] active:scale-[0.98]"
+            >
+              Go to your dashboard
+            </Link>
+          </SignedIn>
         </div>
       </div>
     </section>
@@ -273,7 +288,7 @@ function ChooseFormat() {
   }, []);
 
   return (
-    <section className="px-6 py-20 lg:px-8">
+    <section id="formats" className="px-6 py-20 lg:px-8">
       <div className="mx-auto max-w-4xl">
         <h2 className="text-center font-serif text-3xl font-bold tracking-tight text-[#3d3929] sm:text-4xl">
           Choose your format
@@ -320,9 +335,32 @@ function ChooseFormat() {
                   </a>
                 </div>
               ) : (
-                <span className="mt-4 inline-block self-start rounded-full border border-[#c88c32]/30 bg-[#f0d78c]/20 px-3 py-1 font-sans text-xs font-medium text-[#c88c32]">
-                  {fmt.pricing}
-                </span>
+                <div className="mt-4 space-y-3">
+                  <span className="inline-block rounded-full border border-green-300 bg-green-50 px-3 py-1 font-sans text-xs font-medium text-green-700">
+                    {fmt.pricing}
+                  </span>
+                  <SignedOut>
+                    <SignUpButton mode="modal">
+                      <button className="inline-flex items-center gap-1.5 rounded-lg bg-[#c88c32] px-4 py-2.5 font-sans text-sm font-semibold text-white shadow-sm transition-all hover:bg-[#b07a28] active:scale-[0.98]">
+                        Start writing for free
+                        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
+                        </svg>
+                      </button>
+                    </SignUpButton>
+                  </SignedOut>
+                  <SignedIn>
+                    <Link
+                      to="/app"
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-[#c88c32] px-4 py-2.5 font-sans text-sm font-semibold text-white shadow-sm transition-all hover:bg-[#b07a28] active:scale-[0.98]"
+                    >
+                      Go to your dashboard
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
+                      </svg>
+                    </Link>
+                  </SignedIn>
+                </div>
               )}
             </div>
           ))}
@@ -395,12 +433,12 @@ function EmailCapture() {
     >
       <div className="mx-auto max-w-xl text-center">
         <h2 className="font-serif text-3xl font-bold tracking-tight text-[#3d3929] sm:text-4xl">
-          Be the first to know
+          Stay in the loop
         </h2>
         <p className="mt-3 text-[#6b6757]">
-          Journal 365 is launching soon in three formats. Drop your email and
-          we will let you know the moment it is available — no spam, just the
-          announcement.
+          Journal 365 is available now in three formats — and we have more on the
+          way. Drop your email for updates on new themed packs, features, and
+          special offers. No spam, ever.
         </p>
 
         {status === "success" ? (
@@ -424,7 +462,7 @@ function EmailCapture() {
               You&rsquo;re on the list!
             </h3>
             <p className="mt-2 text-sm text-green-700">
-              Thank you! We&rsquo;ll let you know as soon as Journal 365 launches.
+              Thank you! We&rsquo;ll keep you posted on new prompts and features.
             </p>
           </div>
         ) : (
