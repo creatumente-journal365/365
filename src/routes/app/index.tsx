@@ -58,6 +58,12 @@ function DashboardContent() {
               >
                 Dashboard
               </Link>
+              <Link
+                to="/app/write"
+                className="font-sans text-sm font-medium text-[#6b6757] transition-colors hover:text-[#c88c32]"
+              >
+                Write
+              </Link>
             </nav>
           </div>
           <SignedIn>
@@ -113,10 +119,16 @@ function DashboardContent() {
             Ready to write?
           </h2>
           <p className="mt-2 text-[#6b6757]">
-            The journaling experience is being built. Soon you&apos;ll be able to
-            write daily entries, track your streak, and reflect on your journey
-            — all right here.
+            Open today&apos;s prompt and start journaling. Your words save
+            automatically as you type.
           </p>
+          <Link
+            to="/app/write"
+            className="mt-6 inline-flex items-center gap-2 rounded-full bg-[#c88c32] px-8 py-3 font-sans text-sm font-semibold text-white shadow-sm transition-all hover:bg-[#a6731f] hover:shadow-md"
+          >
+            Write Today&apos;s Entry
+            <span aria-hidden="true">&rarr;</span>
+          </Link>
         </div>
       </main>
     </div>
