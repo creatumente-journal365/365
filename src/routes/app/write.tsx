@@ -15,20 +15,26 @@ import prompts from "~/data/prompts.json";
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Compute today's day-of-year (1–365), wrapping for leap years. */
-function getTodayDay(): number {
-  const now = new Date();
-  const start = new Date(now.getFullYear(), 0, 0);
-  const diff = now.getTime() - start.getTime();
-  const dayOfYear = Math.floor(diff / (1000 * 60 * 60 * 24));
-  return ((dayOfYear - 1) % 365) + 1;
-}
+/** Fetch the user's entry count — used to determine which prompt to show next. */
+const getPromptIndexFn = createServerFn()
+  .validator((data: unknown) => {
+    const d = data as { userId: string };
+    if (!d.userId) throw new Error("Invalid user ID");
+    return d;
+  })
+  .handler(async ({ data }) => {
+    const db = sql();
+    const rows = await db`
+      SELECT COUNT(*)::int AS count FROM entries WHERE user_id = ${data.userId}
+    `;
+    return ((rows as { count: number }[])[0]?.count ?? 0) % 365;
+  });
 
-function getTodayPrompt(): { day: number; prompt: string; theme: string } {
-  const day = getTodayDay();
+/** Get the prompt for a given 0-based index (wraps at 365). */
+function getPromptByIndex(index: number): { day: number; prompt: string; theme: string } {
   return (
-    prompts.find((p: { day: number }) => p.day === day) ?? {
-      day,
+    prompts.find((p: { day: number }) => p.day === index + 1) ?? {
+      day: index + 1,
       prompt: "What's on your mind today?",
       theme: "reflection",
     }
@@ -75,11 +81,10 @@ const loadEntryFn = createServerFn()
 
 /**
  * Recompute and persist streak data after an entry is saved.
- * Fetches all distinct calendar dates for the user from the entries table,
- * computes the current streak (consecutive days ending today or yesterday)
- * and longest streak ever, then upserts the streaks table.
+ * Queries the day column (day-of-year) and converts to calendar dates
+ * to compute consecutive-day streaks correctly regardless of save time.
  */
-const updateStreakFn = createServerFn()
+ const updateStreakFn = createServerFn()
   .validator((data: unknown) => {
     const d = data as { userId: string };
     if (!d.userId) throw new Error("Invalid user ID");
@@ -87,26 +92,31 @@ const updateStreakFn = createServerFn()
   })
   .handler(async ({ data }) => {
     const db = sql();
+    const year = new Date().getFullYear();
 
-    // Fetch all distinct calendar dates for this user
+    // Fetch all distinct day-of-year values for this user
     const rows = await db`
-      SELECT DISTINCT created_at::date AS entry_date
+      SELECT DISTINCT day
       FROM entries
       WHERE user_id = ${data.userId}
-      ORDER BY entry_date DESC
+        AND day >= 1 AND day <= 365
+      ORDER BY day DESC
     `;
 
+    // Convert day-of-year to actual calendar dates
+    const startOfYear = new Date(Date.UTC(year, 0, 1));
     const dateSet = new Set<string>();
-    for (const r of rows as { entry_date: string }[]) {
-      const d = typeof r.entry_date === "string" ? r.entry_date : String(r.entry_date);
-      dateSet.add(d.slice(0, 10));
+    for (const r of rows as { day: number }[]) {
+      const d = new Date(startOfYear);
+      d.setUTCDate(d.getUTCDate() + r.day - 1);
+      dateSet.add(d.toISOString().slice(0, 10));
     }
 
     // --- Compute current streak ---
-    // Count consecutive days ending today or yesterday
+    // Count consecutive days ending today or yesterday (UTC)
     let currentStreak = 0;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const now = new Date();
+    const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 
     // Check today first, then walk backwards
     const checkDate = new Date(today);
@@ -211,8 +221,15 @@ function RedirectToHome() {
 function WriteContent() {
   const { user } = useUser();
 
-  const today = getTodayDay();
-  const todayPrompt = getTodayPrompt();
+  const today = new Date();
+  const start = new Date(today.getFullYear(), 0, 0);
+  const diff = today.getTime() - start.getTime();
+  const calendarDay = Math.floor(diff / (1000 * 60 * 60 * 24));
+  // Keep calendar day-of-year for saving (streaks/calendar use this)
+  const todayDay = ((calendarDay - 1) % 365) + 1;
+
+  const [promptIndex, setPromptIndex] = useState(0);
+  const todayPrompt = getPromptByIndex(promptIndex);
 
   const [content, setContent] = useState("");
   const [saveStatus, setSaveStatus] = useState<
@@ -224,20 +241,24 @@ function WriteContent() {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const userId = user?.id ?? "";
 
-  // Load existing entry on mount
+  // Load prompt index and existing entry on mount
   useEffect(() => {
     if (!userId) return;
     (async () => {
       try {
-        const existing = await loadEntryFn({ data: { userId, day: today } });
+        const [idx, existing] = await Promise.all([
+          getPromptIndexFn({ data: { userId } }),
+          loadEntryFn({ data: { userId, day: todayDay } }),
+        ]);
+        setPromptIndex(idx);
         setContent(existing);
       } catch (err) {
-        console.error("Failed to load entry:", err);
+        console.error("Failed to load:", err);
       } finally {
         setLoading(false);
       }
     })();
-  }, [userId, today]);
+  }, [userId, todayDay]);
 
   // Auto-save with debounce
   const saveContent = useCallback(
@@ -251,7 +272,7 @@ function WriteContent() {
       debounceRef.current = setTimeout(async () => {
         try {
           await saveEntryFn({
-            data: { userId, day: today, content: text },
+            data: { userId, day: todayDay, content: text },
           });
           // Update streaks after successful save
           updateStreakFn({ data: { userId } }).catch((err) =>
@@ -266,7 +287,7 @@ function WriteContent() {
         }
       }, 2000); // 2-second debounce
     },
-    [userId, today],
+    [userId, todayDay],
   );
 
   // Manual save — bypasses debounce, saves immediately
@@ -276,7 +297,7 @@ function WriteContent() {
 
     setSaveStatus("saving");
     try {
-      await saveEntryFn({ data: { userId, day: today, content } });
+      await saveEntryFn({ data: { userId, day: todayDay, content } });
       updateStreakFn({ data: { userId } }).catch((err) =>
         console.error("Streak update failed:", err),
       );
@@ -286,7 +307,7 @@ function WriteContent() {
       console.error("Save failed:", err);
       setSaveStatus("error");
     }
-  }, [userId, today, content]);
+  }, [userId, todayDay, content]);
 
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const next = e.target.value;

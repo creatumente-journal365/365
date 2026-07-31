@@ -313,7 +313,10 @@ function ChooseFormat() {
                 {fmt.description}
               </p>
               {fmt.name === "Printable PDF" ? (
-                <div className="mt-4">
+                <div className="mt-4 space-y-3">
+                  <span className="inline-block rounded-full border border-[#c88c32]/30 bg-[#f0d78c]/20 px-3 py-1 font-sans text-xs font-medium text-[#c88c32]">
+                    {fmt.pricing}
+                  </span>
                   <div id="paypal-container-544MQ4PAPHGDS"></div>
                 </div>
               ) : fmt.name === "Notion Template" ? (
@@ -501,6 +504,26 @@ function Footer() {
     <footer className="border-t border-[#3d3929]/10 px-6 py-8">
       <div className="mx-auto flex max-w-4xl flex-col items-center justify-between gap-4 text-sm text-[#6b6757] sm:flex-row">
         <p>&copy; {new Date().getFullYear()} Create Your Mind. All rights reserved.</p>
+        <div className="flex items-center gap-4">
+          <a
+            href="https://www.instagram.com/crea.tu.mente/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[#6b6757] transition-colors hover:text-[#c88c32]"
+            aria-label="Instagram"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="2" width="20" height="20" rx="5" ry="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/></svg>
+          </a>
+          <a
+            href="https://www.tiktok.com/@creatumente.journals"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[#6b6757] transition-colors hover:text-[#c88c32]"
+            aria-label="TikTok"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 12a4 4 0 1 0 4 4V4a5 5 0 0 0 5 5"/></svg>
+          </a>
+        </div>
         <img
           src="/logo-wordmark.png"
           alt="Journal 365"

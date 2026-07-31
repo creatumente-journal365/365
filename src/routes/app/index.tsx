@@ -39,18 +39,20 @@ const getEntryDatesFn = createServerFn()
   })
   .handler(async ({ data }) => {
     const db = sql();
+    // Query by the day column (day-of-year), not created_at.
+    // Day 1 = Jan 1. We compute the actual date in JS.
     const rows = await db`
-      SELECT DISTINCT created_at::date AS entry_date
+      SELECT DISTINCT day
       FROM entries
       WHERE user_id = ${data.userId}
-        AND created_at >= ${`${data.year}-01-01`}::date
-        AND created_at < ${`${data.year + 1}-01-01`}::date
-      ORDER BY entry_date
+        AND day >= 1 AND day <= 365
+      ORDER BY day
     `;
-    return rows.map((r: { entry_date: string }) => {
-      // neon returns dates as strings like "2026-07-28"
-      const d = typeof r.entry_date === "string" ? r.entry_date : String(r.entry_date);
-      return d.slice(0, 10);
+    const startOfYear = new Date(Date.UTC(data.year, 0, 1));
+    return (rows as { day: number }[]).map((r) => {
+      const d = new Date(startOfYear);
+      d.setUTCDate(d.getUTCDate() + r.day - 1);
+      return d.toISOString().slice(0, 10);
     });
   });
 
@@ -607,6 +609,28 @@ const REMINDER_HOURS = [
   "12:00", "14:00", "16:00", "18:00", "20:00", "21:00", "22:00",
 ];
 
+// Journal 365 is based in Ecuador (GMT-5). All reminder times are
+// stored in UTC and displayed in GMT-5 so the picker always shows local time.
+const TZ_OFFSET_HOURS = -5;
+
+// Convert "HH:MM" from UTC to GMT-5 local time
+function utcToLocal(utcTime: string): string {
+  const [h, m] = utcTime.split(":").map(Number);
+  let localH = h + TZ_OFFSET_HOURS;
+  if (localH < 0) localH += 24;
+  if (localH >= 24) localH -= 24;
+  return `${localH.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}`;
+}
+
+// Convert "HH:MM" from GMT-5 local time to UTC
+function localToUtc(localTime: string): string {
+  const [h, m] = localTime.split(":").map(Number);
+  let utcH = h - TZ_OFFSET_HOURS;
+  if (utcH >= 24) utcH -= 24;
+  if (utcH < 0) utcH += 24;
+  return `${utcH.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}`;
+}
+
 function NotificationSettings({ userId }: { userId: string }) {
   const [status, setStatus] = useState<
     "loading" | "unsupported" | "disabled" | "enabled"
@@ -635,7 +659,7 @@ function NotificationSettings({ userId }: { userId: string }) {
         const sub = await getPushSubFn({ data: { userId } });
         if (sub) {
           setStatus("enabled");
-          setReminderTime(sub.reminder_time);
+          setReminderTime(utcToLocal(sub.reminder_time));
         } else {
           setStatus("disabled");
         }
@@ -692,7 +716,7 @@ function NotificationSettings({ userId }: { userId: string }) {
           endpoint,
           p256dh,
           auth,
-          reminder_time: reminderTime,
+          reminder_time: localToUtc(reminderTime),
         },
       });
 
@@ -734,7 +758,7 @@ function NotificationSettings({ userId }: { userId: string }) {
       setSaving(true);
       try {
         await updateReminderTimeFn({
-          data: { userId, reminder_time: newTime },
+          data: { userId, reminder_time: localToUtc(newTime) },
         });
       } catch (err) {
         console.error("Failed to update reminder time:", err);
@@ -779,7 +803,7 @@ function NotificationSettings({ userId }: { userId: string }) {
               htmlFor="reminder-time"
               className="text-sm text-[#6b6757] shrink-0"
             >
-              Reminder at:
+              Reminder at (your time):
             </label>
             <select
               id="reminder-time"
@@ -794,7 +818,7 @@ function NotificationSettings({ userId }: { userId: string }) {
                 </option>
               ))}
             </select>
-            <span className="text-xs text-[#6b6757]">UTC</span>
+            <span className="text-xs text-[#6b6757]">GMT-5</span>
           </div>
 
           {/* Disable button */}
@@ -846,7 +870,7 @@ function NotificationSettings({ userId }: { userId: string }) {
                     </option>
                   ))}
                 </select>
-                <span className="text-xs text-[#6b6757]">UTC</span>
+                <span className="text-xs text-[#6b6757]">GMT-5</span>
               </div>
 
               <button
