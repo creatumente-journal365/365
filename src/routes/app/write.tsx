@@ -269,6 +269,25 @@ function WriteContent() {
     [userId, today],
   );
 
+  // Manual save — bypasses debounce, saves immediately
+  const handleManualSave = useCallback(async () => {
+    if (!userId) return;
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+
+    setSaveStatus("saving");
+    try {
+      await saveEntryFn({ data: { userId, day: today, content } });
+      updateStreakFn({ data: { userId } }).catch((err) =>
+        console.error("Streak update failed:", err),
+      );
+      setSaveStatus("saved");
+      setTimeout(() => setSaveStatus("idle"), 2000);
+    } catch (err) {
+      console.error("Save failed:", err);
+      setSaveStatus("error");
+    }
+  }, [userId, today, content]);
+
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const next = e.target.value;
     setContent(next);
@@ -356,8 +375,19 @@ function WriteContent() {
                 <p className="font-sans text-xs font-medium uppercase tracking-widest text-[#c88c32]">
                   Day {todayPrompt.day} &middot; {todayPrompt.theme}
                 </p>
-                {/* Save indicator */}
-                <SaveIndicator status={saveStatus} />
+                {/* Save indicator + manual save button */}
+                <div className="flex items-center gap-2">
+                  <SaveIndicator status={saveStatus} userId={userId} />
+                  <button
+                    type="button"
+                    onClick={handleManualSave}
+                    disabled={saveStatus === "saving"}
+                    className="rounded border border-[#3d3929]/15 px-2 py-0.5 font-sans text-xs text-[#6b6757] transition-colors hover:border-[#c88c32]/40 hover:bg-amber-50 hover:text-[#c88c32] disabled:cursor-not-allowed disabled:opacity-30"
+                    title="Save now"
+                  >
+                    Save
+                  </button>
+                </div>
               </div>
               <h1 className="mt-3 font-serif text-2xl font-semibold italic leading-relaxed text-[#3d3929]">
                 &ldquo;{todayPrompt.prompt}&rdquo;
@@ -433,10 +463,14 @@ function WriteContent() {
 /** Subtle save-status indicator pill */
 function SaveIndicator({
   status,
+  userId,
 }: {
   status: "idle" | "saving" | "saved" | "error";
+  userId: string;
 }) {
+  // Don't show anything if idle, or if we have an error but user isn't loaded yet
   if (status === "idle") return null;
+  if (status === "error" && !userId) return null;
 
   const config: Record<
     string,
