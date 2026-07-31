@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { SignedIn, SignedOut, useAuth, useUser, UserButton } from "@clerk/tanstack-start";
 import { createServerFn } from "@tanstack/react-start";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { sql } from "~/db/index";
 
 // ---------------------------------------------------------------------------
@@ -164,6 +164,31 @@ async function getSWRegistration(): Promise<ServiceWorkerRegistration | null> {
 }
 
 // ---------------------------------------------------------------------------
+// Share / milestone helpers (client-side only)
+// ---------------------------------------------------------------------------
+
+const STREAK_MILESTONES = [7, 14, 21, 30, 60, 90, 100, 200, 365];
+
+const LS_PREFIX = "j365_shared_milestone_";
+
+function isMilestoneUnclaimed(streak: number): boolean {
+  if (typeof window === "undefined") return false;
+  if (!STREAK_MILESTONES.includes(streak)) return false;
+  return localStorage.getItem(`${LS_PREFIX}${streak}`) !== "1";
+}
+
+function claimMilestone(streak: number): void {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(`${LS_PREFIX}${streak}`, "1");
+}
+
+function buildShareText(streak: number): string {
+  const origin =
+    typeof window !== "undefined" ? window.location.origin : "https://journal365.com";
+  return `I've journaled for ${streak} days straight with Journal 365 🔥\nOne thoughtful prompt every day — no blank pages.\n${origin}`;
+}
+
+// ---------------------------------------------------------------------------
 // Route
 // ---------------------------------------------------------------------------
 
@@ -217,6 +242,7 @@ function DashboardContent() {
   const [entryDates, setEntryDates] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => {
     if (!userId) return;
@@ -238,6 +264,30 @@ function DashboardContent() {
       }
     })();
   }, [userId]);
+
+  // Determine if current streak hits an unclaimed milestone
+  const currentStreak = streaks?.current_streak ?? 0;
+  const showShareStreak = useMemo(
+    () => currentStreak > 0 && isMilestoneUnclaimed(currentStreak),
+    [currentStreak],
+  );
+
+  const handleShareStreak = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(buildShareText(currentStreak));
+      claimMilestone(currentStreak);
+      setToast("Copied! Share it anywhere.");
+    } catch {
+      setToast("Could not copy. Try again.");
+    }
+  }, [currentStreak]);
+
+  // Auto-dismiss toast
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 2500);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   return (
     <div className="min-h-dvh bg-[#fefcf5]">
@@ -360,6 +410,28 @@ function DashboardContent() {
           </div>
         </div>
 
+        {/* Share streak milestone button */}
+        {showShareStreak && !loading && !error && (
+          <div className="mt-6">
+            <button
+              type="button"
+              onClick={handleShareStreak}
+              className="inline-flex items-center gap-2 rounded-xl border-2 border-[#d4a02c] bg-gradient-to-br from-amber-50 to-yellow-100 px-6 py-4 font-sans text-sm font-semibold text-[#8b6914] shadow-md transition-all hover:from-amber-100 hover:to-yellow-200 hover:shadow-lg active:scale-[0.98]"
+            >
+              <span className="text-xl" aria-hidden="true">
+                🔥
+              </span>
+              Share my {currentStreak}-day streak
+              <span className="text-lg" aria-hidden="true">
+                📋
+              </span>
+            </button>
+            <p className="mt-2 font-sans text-xs text-[#6b6757]">
+              Copy your streak to clipboard and share it anywhere.
+            </p>
+          </div>
+        )}
+
         {/* Calendar heatmap */}
         <div className="mt-12">
           <CalendarHeatmap
@@ -391,6 +463,17 @@ function DashboardContent() {
           </Link>
         </div>
       </main>
+
+      {/* Toast */}
+      {toast && (
+        <div
+          className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 animate-fade-in rounded-full bg-[#3d3929] px-5 py-2.5 font-sans text-sm font-medium text-white shadow-lg"
+          role="status"
+          aria-live="polite"
+        >
+          {toast}
+        </div>
+      )}
     </div>
   );
 }

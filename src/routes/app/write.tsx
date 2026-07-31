@@ -219,6 +219,7 @@ function WriteContent() {
     "idle" | "saving" | "saved" | "error"
   >("idle");
   const [loading, setLoading] = useState(true);
+  const [toast, setToast] = useState<string | null>(null);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const userId = user?.id ?? "";
@@ -281,6 +282,25 @@ function WriteContent() {
     };
   }, []);
 
+  // Auto-dismiss toast
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 2500);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  const handleSharePrompt = useCallback(async () => {
+    const origin =
+      typeof window !== "undefined" ? window.location.origin : "";
+    const text = `"${todayPrompt.prompt}" — from Journal 365\n${origin}`;
+    try {
+      await navigator.clipboard.writeText(text);
+      setToast("Copied!");
+    } catch {
+      setToast("Could not copy. Try again.");
+    }
+  }, [todayPrompt.prompt]);
+
   return (
     <div className="min-h-dvh bg-[#fefcf5]">
       {/* Header */}
@@ -342,6 +362,31 @@ function WriteContent() {
               <h1 className="mt-3 font-serif text-2xl font-semibold italic leading-relaxed text-[#3d3929]">
                 &ldquo;{todayPrompt.prompt}&rdquo;
               </h1>
+              {/* Share prompt button */}
+              <div className="mt-3 flex justify-end">
+                <button
+                  type="button"
+                  onClick={handleSharePrompt}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-[#3d3929]/10 px-3 py-1.5 font-sans text-xs text-[#6b6757] transition-colors hover:border-[#c88c32]/30 hover:bg-amber-50 hover:text-[#c88c32]"
+                  title="Copy prompt to share"
+                >
+                  <svg
+                    className="h-3.5 w-3.5"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={2}
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z"
+                    />
+                  </svg>
+                  Share prompt
+                </button>
+              </div>
             </div>
 
             {/* Writing area */}
@@ -370,6 +415,17 @@ function WriteContent() {
           </>
         )}
       </main>
+
+      {/* Toast */}
+      {toast && (
+        <div
+          className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 animate-fade-in rounded-full bg-[#3d3929] px-5 py-2.5 font-sans text-sm font-medium text-white shadow-lg"
+          role="status"
+          aria-live="polite"
+        >
+          {toast}
+        </div>
+      )}
     </div>
   );
 }
