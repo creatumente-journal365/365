@@ -12,6 +12,7 @@ import { appendFile, mkdir } from "node:fs/promises";
 import handler from "./dist/server/server.js";
 import { setupDatabase } from "./src/db/index.js";
 import { startNotificationScheduler } from "./src/notifications/scheduler.js";
+import { handleSendReminders } from "./src/routes/api/send-reminders.js";
 
 // Run database migration on startup
 try {
@@ -74,8 +75,27 @@ for (let attempt = 1; ; attempt++) {
       async fetch(req) {
         const { pathname } = new URL(req.url);
         let response: Response;
+        // API: Send push notifications
+        if (pathname === "/api/send-reminders") {
+          try {
+            const result = await handleSendReminders();
+            response = new Response(JSON.stringify(result), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            });
+          } catch (err) {
+            console.error("send-reminders API error:", err);
+            response = new Response(
+              JSON.stringify({ error: "Internal server error" }),
+              {
+                status: 500,
+                headers: { "Content-Type": "application/json" },
+              },
+            );
+          }
+        }
         // Serve the PDF for owner review
-        if (pathname === "/api/preview-pdf") {
+        else if (pathname === "/api/preview-pdf") {
           const pdf = Bun.file("/home/team/shared/journal-365.pdf");
           response = await pdf.exists()
             ? new Response(pdf, {
