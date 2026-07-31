@@ -8,6 +8,7 @@
 // member's `bun run publish` runs as their own user), so publish never collides
 // with an already-running server. Every sandbox user has passwordless sudo, so
 // the takeover works across user boundaries.
+import { appendFile, mkdir } from "node:fs/promises";
 import handler from "./dist/server/server.js";
 import { setupDatabase } from "./src/db/index.js";
 import { startNotificationScheduler } from "./src/notifications/scheduler.js";
@@ -28,6 +29,27 @@ try {
 const PORT = 3000;
 const HOST = "0.0.0.0";
 const CLIENT_DIR = `${import.meta.dir}/dist/client`;
+const ACCESS_LOG = `${import.meta.dir}/.run/access.log`;
+
+await mkdir(`${import.meta.dir}/.run`, { recursive: true });
+
+async function logRequest(req: Request, response: Response) {
+  const url = new URL(req.url);
+  const entry = {
+    timestamp: new Date().toISOString(),
+    method: req.method,
+    path: url.pathname,
+    status: response.status,
+    userAgent: req.headers.get("user-agent") ?? "",
+    referer: req.headers.get("referer") ?? "",
+  };
+
+  try {
+    await appendFile(ACCESS_LOG, JSON.stringify(entry) + "\n");
+  } catch (err) {
+    console.warn("Request log write failed:", err);
+  }
+}
 
 // Free PORT regardless of which user owns the current listener. lsof runs under
 // sudo so it can see (and the kill can signal) a process owned by another user;
@@ -51,26 +73,32 @@ for (let attempt = 1; ; attempt++) {
       hostname: HOST,
       async fetch(req) {
         const { pathname } = new URL(req.url);
+        let response: Response;
         // Serve the PDF for owner review
         if (pathname === "/api/preview-pdf") {
           const pdf = Bun.file("/home/team/shared/journal-365.pdf");
-          if (await pdf.exists()) {
-            return new Response(pdf, {
-              headers: {
-                "Content-Type": "application/pdf",
-                "Content-Disposition": 'attachment; filename="journal-365.pdf"',
-              },
-            });
-          }
-          return new Response("PDF not found", { status: 404 });
-        }
-        if (pathname !== "/") {
+          response = await pdf.exists()
+            ? new Response(pdf, {
+                headers: {
+                  "Content-Type": "application/pdf",
+                  "Content-Disposition": 'attachment; filename="journal-365.pdf"',
+                },
+              })
+            : new Response("PDF not found", { status: 404 });
+        } else if (pathname !== "/") {
           const file = Bun.file(CLIENT_DIR + pathname);
-          if (await file.exists()) return new Response(file);
+          response = (await file.exists())
+            ? new Response(file)
+            : await (
+                handler as { fetch: (r: Request) => Response | Promise<Response> }
+              ).fetch(req);
+        } else {
+          response = await (
+            handler as { fetch: (r: Request) => Response | Promise<Response> }
+          ).fetch(req);
         }
-        return (
-          handler as { fetch: (r: Request) => Response | Promise<Response> }
-        ).fetch(req);
+        await logRequest(req, response);
+        return response;
       },
     });
     break;
