@@ -14,28 +14,29 @@ export const Route = createRootRoute({
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Journal 365 — A prompted journal with one writing prompt per day" },
-      { name: "description", content: "Journal 365 eliminates the blank-page problem. One thoughtful prompt per day helps you build a daily writing habit that lasts." },
-      { property: "og:title", content: "Journal 365 — A prompted journal with one writing prompt per day" },
-      { property: "og:description", content: "365 prompts. One year. Your story. A prompted journal that eliminates the blank page — available as printable PDF, Notion template, or web app." },
+      { title: "Create Your Mind | Write with real people, every day" },
+      { name: "description", content: "One daily creative writing prompt, a space to share your response, and a community of real people writing alongside you. Join the Create Your Mind waitlist." },
+      { property: "og:title", content: "Create Your Mind | Write with real people, every day" },
+      { property: "og:description", content: "One daily creative writing prompt, a space to share your response, and a community of real people writing alongside you." },
       { property: "og:type", content: "website" },
-      { property: "og:image", content: "/logo-wordmark.png" },
       { name: "twitter:card", content: "summary" },
     ],
     links: [
       { rel: "stylesheet", href: appCss },
-      { rel: "icon", type: "image/png", href: "/logo-icon.png" },
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
       { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
       { rel: "stylesheet", href: "https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=Inter:wght@400;500;600&display=swap" },
     ],
-    scripts: [
-      {
-        src: "https://www.paypal.com/sdk/js?client-id=BAACy9gww_NfZime0ME1YsCFY6ZcqGTh_4a1LyLU6S8ExF5kNjOeFwoaMyPbaerzrEOO6mK9I6nkkE1J3I&components=hosted-buttons&disable-funding=venmo&currency=USD",
-      },
-    ],
   }),
-  notFoundComponent: () => <div>Page not found</div>,
+  notFoundComponent: () => (
+    <div className="flex min-h-dvh flex-col items-center justify-center gap-4 bg-[#fefcf5] px-6 text-center">
+      <p className="font-serif text-5xl font-bold text-[#c88c32]">404</p>
+      <p className="font-serif text-xl text-[#3d3929]">Page not found</p>
+      <a href="/" className="font-sans text-sm font-medium text-[#c88c32] underline underline-offset-2">
+        Back to Create Your Mind
+      </a>
+    </div>
+  ),
   component: RootComponent,
 });
 
