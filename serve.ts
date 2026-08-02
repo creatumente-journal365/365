@@ -11,12 +11,14 @@
 import { appendFile, mkdir } from "node:fs/promises";
 import handler from "./dist/server/server.js";
 import { setupDatabase } from "./src/db/index.js";
-import { startNotificationScheduler } from "./src/notifications/scheduler.js";
-import { handleSendReminders } from "./src/routes/api/send-reminders.js";
+import { seedPrompts } from "./src/db/seed-prompts.js";
 
-// Run database migration on startup
+// Run database migration + seed the prompt calendar on startup. Both are
+// idempotent (IF NOT EXISTS / ON CONFLICT DO NOTHING), so this is safe on every
+// start; each restart extends the seeded window by the days that have passed.
 try {
   await setupDatabase();
+  await seedPrompts();
   console.log("Database setup complete.");
 } catch (err) {
   console.warn("Database setup skipped (DB may not be connected yet):", err);
@@ -75,37 +77,8 @@ for (let attempt = 1; ; attempt++) {
       async fetch(req) {
         const { pathname } = new URL(req.url);
         let response: Response;
-        // API: Send push notifications
-        if (pathname === "/api/send-reminders") {
-          try {
-            const result = await handleSendReminders();
-            response = new Response(JSON.stringify(result), {
-              status: 200,
-              headers: { "Content-Type": "application/json" },
-            });
-          } catch (err) {
-            console.error("send-reminders API error:", err);
-            response = new Response(
-              JSON.stringify({ error: "Internal server error" }),
-              {
-                status: 500,
-                headers: { "Content-Type": "application/json" },
-              },
-            );
-          }
-        }
-        // Serve the PDF for owner review
-        else if (pathname === "/api/preview-pdf") {
-          const pdf = Bun.file("/home/team/shared/journal-365.pdf");
-          response = await pdf.exists()
-            ? new Response(pdf, {
-                headers: {
-                  "Content-Type": "application/pdf",
-                  "Content-Disposition": 'attachment; filename="journal-365.pdf"',
-                },
-              })
-            : new Response("PDF not found", { status: 404 });
-        } else if (pathname !== "/") {
+        // Static assets first (they don't need SSR), then the TanStack handler.
+        if (pathname !== "/") {
           const file = Bun.file(CLIENT_DIR + pathname);
           response = (await file.exists())
             ? new Response(file)
@@ -129,10 +102,3 @@ for (let attempt = 1; ; attempt++) {
 }
 
 console.log(`team-site serving on http://${HOST}:${String(PORT)}`);
-
-// Start the push notification scheduler for daily reminders
-try {
-  startNotificationScheduler();
-} catch (err) {
-  console.warn("Notification scheduler skipped (VAPID keys may not be configured):", err);
-}
