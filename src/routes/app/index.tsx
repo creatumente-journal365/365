@@ -6,7 +6,7 @@ import {
   useUser,
   UserButton,
 } from "@clerk/tanstack-start";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { sql } from "~/db/index";
 
 // ---------------------------------------------------------------------------
@@ -30,6 +30,7 @@ interface Prompt {
 
 interface ResponseRow {
   id: number;
+  user_id: string;
   author_name: string;
   content: string;
   word_count: number;
@@ -82,7 +83,7 @@ const getResponses = createServerFn()
   .handler(async ({ data }) => {
     const db = sql();
     const rows = await db`
-      SELECT id, author_name, content, word_count, created_at
+      SELECT id, user_id, author_name, content, word_count, created_at
       FROM responses
       WHERE prompt_id = ${data.promptId}
       ORDER BY created_at DESC
@@ -90,6 +91,7 @@ const getResponses = createServerFn()
     `;
     return rows.map((r) => ({
       id: Number(r.id),
+      user_id: String(r.user_id),
       author_name: String(r.author_name ?? "Anonymous"),
       content: String(r.content),
       word_count: Number(r.word_count ?? 0),
@@ -130,16 +132,18 @@ const saveResponse = createServerFn({ method: "POST" })
 /** Toggle a like on a response. Returns whether the user now likes it + the new count. */
 const toggleLike = createServerFn({ method: "POST" })
   .validator((data: unknown) => {
-    const d = data as { responseId: number; userId: string };
+    const d = data as { responseId: number; userId: string; actorName?: string };
     if (!d || !Number.isInteger(d.responseId) || d.responseId <= 0) {
       throw new Error("Invalid response");
     }
     const userId = String(d.userId ?? "").trim().slice(0, 128);
     if (!userId) throw new Error("Who are you? Sign in or set a name first.");
-    return { responseId: d.responseId, userId };
+    const actorName = String(d.actorName ?? userId).trim().slice(0, 60) || userId;
+    return { responseId: d.responseId, userId, actorName };
   })
   .handler(async ({ data }) => {
     const db = sql();
+    const [response] = await db`SELECT user_id FROM responses WHERE id = ${data.responseId}`;
     // Delete first; if nothing was deleted the user wasn't liked yet, so insert.
     const removed = await db`
       DELETE FROM response_likes
@@ -149,6 +153,13 @@ const toggleLike = createServerFn({ method: "POST" })
     let liked: boolean;
     if (removed.length > 0) {
       liked = false;
+      await db`
+        DELETE FROM notifications
+        WHERE user_id = ${response?.user_id ?? ""}
+          AND response_id = ${data.responseId}
+          AND type = 'like'
+          AND actor_name = ${data.actorName}
+      `;
     } else {
       await db`
         INSERT INTO response_likes (response_id, user_id)
@@ -156,6 +167,12 @@ const toggleLike = createServerFn({ method: "POST" })
         ON CONFLICT (response_id, user_id) DO NOTHING
       `;
       liked = true;
+      if (response?.user_id && response.user_id !== data.userId) {
+        await db`
+          INSERT INTO notifications (user_id, type, response_id, actor_name)
+          VALUES (${response.user_id}, 'like', ${data.responseId}, ${data.actorName})
+        `;
+      }
     }
     const countRows = await db`
       SELECT COUNT(*)::int AS n FROM response_likes
@@ -252,6 +269,13 @@ const commentOnResponse = createServerFn({ method: "POST" })
       VALUES (${data.responseId}, ${data.userId}, ${data.authorName}, ${data.content})
       RETURNING id, author_name, content, created_at
     `;
+    const [response] = await db`SELECT user_id FROM responses WHERE id = ${data.responseId}`;
+    if (response?.user_id && response.user_id !== data.userId) {
+      await db`
+        INSERT INTO notifications (user_id, type, response_id, actor_name)
+        VALUES (${response.user_id}, 'comment', ${data.responseId}, ${data.authorName})
+      `;
+    }
     const c = rows[0] as {
       id: number;
       author_name: unknown;
@@ -271,6 +295,57 @@ const commentOnResponse = createServerFn({ method: "POST" })
  * to a prompt, in one round trip — so the responses list doesn't fan out N+1
  * requests on load.
  */
+interface NotificationRow {
+  id: number;
+  type: "like" | "comment";
+  response_id: number;
+  actor_name: string;
+  created_at: string;
+}
+
+const getNotifications = createServerFn()
+  .validator((data: unknown) => {
+    const d = data as { userId: string };
+    return { userId: String(d?.userId ?? "") };
+  })
+  .handler(async ({ data }) => {
+    if (!data.userId) return [];
+    const db = sql();
+    const rows = await db`
+      SELECT n.id, n.type, n.response_id, n.actor_name, n.created_at
+      FROM notifications n
+      WHERE n.user_id = ${data.userId} AND n.read = FALSE
+      ORDER BY n.created_at DESC LIMIT 50
+    `;
+    return rows.map((n) => ({
+      id: Number(n.id), type: String(n.type) as "like" | "comment",
+      response_id: Number(n.response_id), actor_name: String(n.actor_name), created_at: String(n.created_at),
+    })) satisfies NotificationRow[];
+  });
+
+const getUnreadCount = createServerFn()
+  .validator((data: unknown) => {
+    const d = data as { userId: string };
+    return { userId: String(d?.userId ?? "") };
+  })
+  .handler(async ({ data }) => {
+    if (!data.userId) return 0;
+    const db = sql();
+    const [row] = await db`SELECT COUNT(*)::int AS count FROM notifications WHERE user_id = ${data.userId} AND read = FALSE`;
+    return Number(row?.count ?? 0);
+  });
+
+const markNotificationsRead = createServerFn({ method: "POST" })
+  .validator((data: unknown) => {
+    const d = data as { userId: string };
+    return { userId: String(d?.userId ?? "") };
+  })
+  .handler(async ({ data }) => {
+    if (!data.userId) return;
+    const db = sql();
+    await db`UPDATE notifications SET read = TRUE WHERE user_id = ${data.userId}`;
+  });
+
 const getEngagementForPrompt = createServerFn()
   .validator((data: unknown) => {
     const d = data as { promptId: number; userId: string };
@@ -344,6 +419,7 @@ function Header() {
           >
             Home
           </Link>
+          <NotificationBell />
           <SignedIn>
             <UserButton
               appearance={{
@@ -362,6 +438,46 @@ function Header() {
         </div>
       </div>
     </header>
+  );
+}
+
+function NotificationBell() {
+  const { user, isLoaded } = useUser();
+  const [guestId, setGuestId] = useState<string | null>(null);
+  const [count, setCount] = useState(0);
+  const [items, setItems] = useState<NotificationRow[]>([]);
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const userId = user?.id ?? guestId;
+
+  useEffect(() => setGuestId(getOrCreateGuestId()), []);
+  const refresh = useCallback(async () => {
+    if (!userId) return;
+    try { setCount(await getUnreadCount({ data: { userId } })); } catch (err) { console.error("Failed to load notifications", err); }
+  }, [userId]);
+  useEffect(() => { if (isLoaded && userId) { void refresh(); const timer = window.setInterval(() => void refresh(), 30000); return () => window.clearInterval(timer); } }, [isLoaded, userId, refresh]);
+  useEffect(() => {
+    const close = (event: MouseEvent) => { if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, []);
+  const toggle = async () => {
+    if (!userId) return;
+    if (!open) { try { setItems(await getNotifications({ data: { userId } })); } catch (err) { console.error("Failed to load notifications", err); } }
+    setOpen((value) => !value);
+  };
+  const markRead = async () => { if (!userId) return; await markNotificationsRead({ data: { userId } }); setCount(0); setItems([]); };
+  return (
+    <div ref={ref} className="relative">
+      <button type="button" onClick={() => void toggle()} aria-label={`Notifications${count ? ` (${count} unread)` : ""}`} className={`relative rounded-full p-2 transition-colors hover:bg-[#f5f0e3] ${count ? "text-[#c88c32]" : "text-[#6b6757]"}`}>
+        <BellIcon />
+        {count > 0 && <span className="absolute -right-0.5 -top-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-[#c88c32] text-xs text-white">{count > 9 ? "9+" : count}</span>}
+      </button>
+      {open && <div className="absolute right-0 top-12 z-50 w-80 rounded-xl border border-[#3d3929]/10 bg-white p-3 shadow-md">
+        <div className="flex items-center justify-between border-b border-[#3d3929]/10 px-2 pb-2"><h2 className="font-serif font-semibold text-[#3d3929]">Notifications</h2>{items.length > 0 && <button type="button" onClick={() => void markRead()} className="font-sans text-xs font-medium text-[#c88c32] hover:underline">Mark all read</button>}</div>
+        {items.length === 0 ? <p className="px-2 py-5 text-center font-sans text-sm text-[#6b6757]">You&apos;re all caught up.</p> : <ul className="max-h-72 overflow-y-auto">{items.map((item) => <li key={item.id}><Link to="/app" onClick={() => setOpen(false)} className="block rounded-lg px-2 py-3 font-sans text-sm text-[#3d3929] hover:bg-[#f5f0e3]"><span className="font-semibold">{item.actor_name}</span> {item.type === "like" ? "liked" : "commented on"} your response<span className="mt-1 block text-xs text-[#6b6757]">{formatRelativeTime(item.created_at)}</span></Link></li>)}</ul>}
+      </div>}
+    </div>
   );
 }
 
@@ -500,7 +616,7 @@ function TodayView() {
       }));
       try {
         const res = await toggleLike({
-          data: { responseId, userId },
+          data: { responseId, userId, actorName: displayName || userId },
         });
         setEngagement((prev) => ({
           ...prev,
@@ -523,7 +639,7 @@ function TodayView() {
         console.error("Like failed:", err);
       }
     },
-    [engagement, userId],
+    [engagement, userId, displayName],
   );
 
   const handleCommentCountChange = useCallback(
@@ -919,6 +1035,14 @@ function ResponseCard({
 // ---------------------------------------------------------------------------
 // Icons — small, stroke-drawn, literary rather than social
 // ---------------------------------------------------------------------------
+
+function BellIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" />
+    </svg>
+  );
+}
 
 function HeartIcon({ filled }: { filled: boolean }) {
   return (

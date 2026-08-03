@@ -87,5 +87,23 @@ export async function setupDatabase(): Promise<void> {
     ON response_comments (response_id);
   `;
 
+  await db`
+    CREATE TABLE IF NOT EXISTS notifications (
+      id SERIAL PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      type TEXT NOT NULL,
+      response_id INTEGER REFERENCES responses(id) ON DELETE CASCADE,
+      actor_name TEXT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      read BOOLEAN DEFAULT FALSE
+    );
+  `;
+  await db`
+    CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications (user_id);
+  `;
+  await db`
+    CREATE INDEX IF NOT EXISTS idx_notifications_unread ON notifications (user_id, read) WHERE read = FALSE;
+  `;
+
   console.log("Database tables verified/created successfully.");
 }
