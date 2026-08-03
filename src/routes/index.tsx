@@ -162,20 +162,20 @@ function Hero() {
 
 const valueProps = [
   {
-    title: "Writing feels better together.",
-    body: "The internet is full of content. What's harder to find is a small moment of genuine human imagination: a person noticing something, feeling something, and putting it into words. We're building a community where that kind of creativity gets time, attention, and company.",
+    title: "Real writers, not AI.",
+    body: "Every word on The Daily Draft is written by a human being. No generated stories, no content machines — just people putting real imagination on the page.",
   },
   {
-    title: "One prompt to get you moving.",
-    body: "A fresh creative writing prompt arrives every day. It might take you somewhere tender, strange, funny, or unexpected. No blank-page spiral and no need to plan a novel — just a starting point and a few minutes to see where it leads.",
+    title: "A community that reads you.",
+    body: "This isn't a publishing platform where your work disappears into the void. Writers read each other's responses, leave thoughtful reactions, and show up for one another.",
   },
   {
-    title: "Share the piece you made.",
-    body: "Write a short response within a friendly word limit, then post it to the day's conversation. You don't need to call yourself a writer or have a polished draft. Bring the idea that surprised you and the sentence you're glad you followed.",
+    title: "One prompt, no blank page.",
+    body: "A fresh creative writing prompt every day. You get a starting point and a 500-word limit. No pressure to be perfect — just show up and write.",
   },
   {
-    title: "Read a hundred different possibilities.",
-    body: "Everyone begins with the same prompt; no two people take it to the same place. Read what other writers saw in it, leave a thoughtful reaction, and feel the quiet encouragement of people making something alongside you.",
+    title: "No self-promotion. Just writing.",
+    body: "Writing groups too often become billboards for people's books. Here, everyone writes to the same prompt. The work speaks for itself.",
   },
 ];
 
@@ -187,7 +187,8 @@ function WhyJoin() {
           Why join
         </h2>
         <p className="mx-auto mt-3 max-w-lg text-center text-[#6b6757]">
-          A small, welcoming room where your imagination gets company.
+          A writing community for humans, by humans — no AI, no algorithms, no
+          self-promotion.
         </p>
         <div className="mt-14 grid gap-6 sm:grid-cols-2">
           {valueProps.map((vp) => (
