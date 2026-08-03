@@ -13,7 +13,7 @@ interface Subscriber {
 }
 
 // ---------------------------------------------------------------------------
-// Server function: waitlist capture
+// Server function: email capture
 // ---------------------------------------------------------------------------
 
 const subscribe = createServerFn({ method: "POST" })
@@ -68,7 +68,7 @@ function Home() {
       <HowItWorks />
       <CommunityPromise />
       <SocialProof />
-      <Waitlist />
+      <StayInTouch />
       <Footer />
     </div>
   );
@@ -92,19 +92,19 @@ function Nav() {
           <a href="#why-join" className="transition-colors hover:text-[#c88c32]">
             Why join
           </a>
-          <a
-            href="#waitlist"
+          <Link
+            to="/app"
             className="rounded-full bg-[#c88c32] px-4 py-2 font-semibold text-white shadow-sm transition-all hover:bg-[#a6731f]"
           >
-            Join the waitlist
-          </a>
+            Start writing
+          </Link>
         </nav>
-        <a
-          href="#waitlist"
+        <Link
+          to="/app"
           className="rounded-full bg-[#c88c32] px-4 py-2 font-sans text-sm font-semibold text-white shadow-sm transition-all hover:bg-[#a6731f] sm:hidden"
         >
-          Join the waitlist
-        </a>
+          Start writing
+        </Link>
       </div>
     </header>
   );
@@ -140,15 +140,9 @@ function Hero() {
         </p>
 
         <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
-          <a
-            href="#waitlist"
-            className="inline-block rounded-lg bg-[#c88c32] px-8 py-4 font-sans text-base font-semibold text-white shadow-md transition-all hover:bg-[#a6731f] hover:shadow-lg active:scale-[0.98]"
-          >
-            Join the waitlist
-          </a>
           <Link
             to="/app"
-            className="inline-block rounded-lg border-2 border-[#c88c32] bg-white px-8 py-4 font-sans text-base font-semibold text-[#c88c32] shadow-sm transition-all hover:bg-[#fef9f0] active:scale-[0.98]"
+            className="inline-block rounded-lg bg-[#c88c32] px-8 py-4 font-sans text-base font-semibold text-white shadow-md transition-all hover:bg-[#a6731f] hover:shadow-lg active:scale-[0.98]"
           >
             Start writing — free during beta
           </Link>
@@ -318,10 +312,10 @@ function SocialProof() {
 }
 
 // ---------------------------------------------------------------------------
-// Waitlist CTA
+// Stay in touch
 // ---------------------------------------------------------------------------
 
-function Waitlist() {
+function StayInTouch() {
   const [email, setEmail] = useState("");
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState("");
@@ -345,17 +339,16 @@ function Waitlist() {
 
   return (
     <section
-      id="waitlist"
+      id="stay-in-touch"
       className="border-t border-[#3d3929]/10 bg-[#f5f0e3] px-6 py-20 lg:px-8"
     >
       <div className="mx-auto max-w-xl text-center">
         <h2 className="font-serif text-3xl font-bold tracking-tight text-[#3d3929] sm:text-4xl">
-          Save a place for your imagination.
+          Stay in the loop
         </h2>
         <p className="mt-3 text-[#6b6757]">
-          We&rsquo;re creating the first version with writers, not guessing what
-          writers need. Join the waitlist for early access and occasional updates
-          as the community takes shape.
+          Get an occasional note when new features drop or the community hits a
+          milestone. No spam, no daily marketing.
         </p>
 
         {status === "success" ? (
@@ -375,7 +368,7 @@ function Waitlist() {
               You&rsquo;re on the list.
             </h3>
             <p className="mt-2 text-sm text-green-700">
-              We&rsquo;ll be in touch when the first writing room is ready.
+              We&rsquo;ll reach out when something worth sharing happens.
             </p>
           </div>
         ) : (
@@ -395,15 +388,15 @@ function Waitlist() {
                 disabled={status === "loading"}
                 className="rounded-lg bg-[#c88c32] px-6 py-3.5 font-sans text-base font-semibold text-white shadow-sm transition-all hover:bg-[#a6731f] active:scale-[0.98] disabled:opacity-60"
               >
-                {status === "loading" ? "Joining…" : "Join the waitlist"}
+                {status === "loading" ? "Subscribing…" : "Keep me posted"}
               </button>
             </div>
             {status === "error" && (
               <p className="mt-3 text-sm text-red-600">{errorMessage}</p>
             )}
             <p className="mt-4 font-sans text-xs text-[#6b6757]">
-              No daily marketing emails. Just early access and meaningful updates
-              from The Daily Draft. Unsubscribe anytime.
+              Unsubscribe anytime. We&rsquo;ll only write when there&rsquo;s real
+              news from The Daily Draft.
             </p>
           </form>
         )}
@@ -448,10 +441,10 @@ function Footer() {
               TikTok
             </a>
             <a
-              href="#waitlist"
+              href="#stay-in-touch"
               className="font-semibold text-[#c88c32] transition-colors hover:text-[#a6731f]"
             >
-              Join the waitlist
+              Stay in touch
             </a>
           </div>
           <p className="font-sans text-xs text-[#6b6757]/70">
