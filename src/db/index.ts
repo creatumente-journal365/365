@@ -56,5 +56,36 @@ export async function setupDatabase(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_responses_prompt_id ON responses (prompt_id);
   `;
 
+  // Likes on responses — one per user per response.
+  await db`
+    CREATE TABLE IF NOT EXISTS response_likes (
+      id SERIAL PRIMARY KEY,
+      response_id INTEGER REFERENCES responses(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(response_id, user_id)
+    );
+  `;
+  await db`
+    CREATE INDEX IF NOT EXISTS idx_response_likes_response_id
+    ON response_likes (response_id);
+  `;
+
+  // Comments on responses (quiet margin conversation, not a feed).
+  await db`
+    CREATE TABLE IF NOT EXISTS response_comments (
+      id SERIAL PRIMARY KEY,
+      response_id INTEGER REFERENCES responses(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL,
+      author_name TEXT NOT NULL,
+      content TEXT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `;
+  await db`
+    CREATE INDEX IF NOT EXISTS idx_response_comments_response_id
+    ON response_comments (response_id);
+  `;
+
   console.log("Database tables verified/created successfully.");
 }

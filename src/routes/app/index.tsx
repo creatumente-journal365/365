@@ -6,7 +6,7 @@ import {
   useUser,
   UserButton,
 } from "@clerk/tanstack-start";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { sql } from "~/db/index";
 
 // ---------------------------------------------------------------------------
@@ -15,6 +15,8 @@ import { sql } from "~/db/index";
 
 const MAX_WORDS = 500;
 const GUEST_NAME_KEY = "cym_guest_name";
+const GUEST_ID_KEY = "cym_guest_id";
+const MAX_COMMENT_CHARS = 1000;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -32,6 +34,21 @@ interface ResponseRow {
   content: string;
   word_count: number;
   created_at: string;
+}
+
+/** A comment on a response, oldest first (newest last). */
+interface Comment {
+  id: number;
+  author_name: string;
+  content: string;
+  created_at: string;
+}
+
+/** Per-response engagement: like count, whether the current user liked it, comment count. */
+interface Engagement {
+  likes: number;
+  liked: boolean;
+  comments: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -110,6 +127,186 @@ const saveResponse = createServerFn({ method: "POST" })
     return { success: true as const };
   });
 
+/** Toggle a like on a response. Returns whether the user now likes it + the new count. */
+const toggleLike = createServerFn({ method: "POST" })
+  .validator((data: unknown) => {
+    const d = data as { responseId: number; userId: string };
+    if (!d || !Number.isInteger(d.responseId) || d.responseId <= 0) {
+      throw new Error("Invalid response");
+    }
+    const userId = String(d.userId ?? "").trim().slice(0, 128);
+    if (!userId) throw new Error("Who are you? Sign in or set a name first.");
+    return { responseId: d.responseId, userId };
+  })
+  .handler(async ({ data }) => {
+    const db = sql();
+    // Delete first; if nothing was deleted the user wasn't liked yet, so insert.
+    const removed = await db`
+      DELETE FROM response_likes
+      WHERE response_id = ${data.responseId} AND user_id = ${data.userId}
+      RETURNING id
+    `;
+    let liked: boolean;
+    if (removed.length > 0) {
+      liked = false;
+    } else {
+      await db`
+        INSERT INTO response_likes (response_id, user_id)
+        VALUES (${data.responseId}, ${data.userId})
+        ON CONFLICT (response_id, user_id) DO NOTHING
+      `;
+      liked = true;
+    }
+    const countRows = await db`
+      SELECT COUNT(*)::int AS n FROM response_likes
+      WHERE response_id = ${data.responseId}
+    `;
+    return { liked, count: Number(countRows[0]?.n ?? 0) } satisfies {
+      liked: boolean;
+      count: number;
+    };
+  });
+
+/** Like count + whether the current user liked a response. */
+const getResponseLikes = createServerFn()
+  .validator((data: unknown) => {
+    const d = data as { responseId: number; userId: string };
+    if (!d || !Number.isInteger(d.responseId) || d.responseId <= 0) {
+      throw new Error("Invalid response");
+    }
+    return { responseId: d.responseId, userId: String(d.userId ?? "") };
+  })
+  .handler(async ({ data }) => {
+    const db = sql();
+    const countRows = await db`
+      SELECT COUNT(*)::int AS n FROM response_likes
+      WHERE response_id = ${data.responseId}
+    `;
+    let liked = false;
+    if (data.userId) {
+      const mine = await db`
+        SELECT 1 FROM response_likes
+        WHERE response_id = ${data.responseId} AND user_id = ${data.userId}
+        LIMIT 1
+      `;
+      liked = mine.length > 0;
+    }
+    return {
+      count: Number(countRows[0]?.n ?? 0),
+      liked,
+    } satisfies { count: number; liked: boolean };
+  });
+
+/** Comments on a response, oldest first (newest last). */
+const getResponseComments = createServerFn()
+  .validator((data: unknown) => {
+    const d = data as { responseId: number };
+    if (!d || !Number.isInteger(d.responseId) || d.responseId <= 0) {
+      throw new Error("Invalid response");
+    }
+    return d;
+  })
+  .handler(async ({ data }) => {
+    const db = sql();
+    const rows = await db`
+      SELECT id, author_name, content, created_at
+      FROM response_comments
+      WHERE response_id = ${data.responseId}
+      ORDER BY created_at ASC, id ASC
+      LIMIT 500
+    `;
+    return rows.map((c) => ({
+      id: Number(c.id),
+      author_name: String(c.author_name ?? "Anonymous"),
+      content: String(c.content),
+      created_at: String(c.created_at),
+    })) satisfies Comment[];
+  });
+
+/** Add a comment to a response. Returns the stored comment. */
+const commentOnResponse = createServerFn({ method: "POST" })
+  .validator((data: unknown) => {
+    const d = data as {
+      responseId: number;
+      userId: string;
+      authorName: string;
+      content: string;
+    };
+    if (!d || !Number.isInteger(d.responseId) || d.responseId <= 0) {
+      throw new Error("Invalid response");
+    }
+    const content = String(d.content ?? "").trim();
+    if (!content) throw new Error("Say something before you send it.");
+    if (content.length > MAX_COMMENT_CHARS) {
+      throw new Error(`Keep notes under ${MAX_COMMENT_CHARS} characters.`);
+    }
+    const userId = String(d.userId ?? "").trim().slice(0, 128);
+    if (!userId) throw new Error("Who are you? Sign in or set a name first.");
+    const authorName = String(d.authorName ?? "").trim().slice(0, 60) || "Anonymous";
+    return { responseId: d.responseId, userId, authorName, content };
+  })
+  .handler(async ({ data }) => {
+    const db = sql();
+    const rows = await db`
+      INSERT INTO response_comments (response_id, user_id, author_name, content)
+      VALUES (${data.responseId}, ${data.userId}, ${data.authorName}, ${data.content})
+      RETURNING id, author_name, content, created_at
+    `;
+    const c = rows[0] as {
+      id: number;
+      author_name: unknown;
+      content: unknown;
+      created_at: unknown;
+    };
+    return {
+      id: Number(c.id),
+      author_name: String(c.author_name ?? "Anonymous"),
+      content: String(c.content),
+      created_at: String(c.created_at),
+    } satisfies Comment;
+  });
+
+/**
+ * Engagement (like count, "did I like it?", comment count) for every response
+ * to a prompt, in one round trip — so the responses list doesn't fan out N+1
+ * requests on load.
+ */
+const getEngagementForPrompt = createServerFn()
+  .validator((data: unknown) => {
+    const d = data as { promptId: number; userId: string };
+    if (!d || typeof d.promptId !== "number") throw new Error("Invalid prompt");
+    return { promptId: d.promptId, userId: String(d.userId ?? "") };
+  })
+  .handler(async ({ data }) => {
+    const db = sql();
+    const rows = await db`
+      SELECT
+        r.id,
+        (SELECT COUNT(*)::int FROM response_likes l WHERE l.response_id = r.id) AS like_count,
+        (SELECT COUNT(*)::int FROM response_comments c WHERE c.response_id = r.id) AS comment_count,
+        EXISTS(
+          SELECT 1 FROM response_likes l2
+          WHERE l2.response_id = r.id AND l2.user_id = ${data.userId}
+        ) AS liked
+      FROM responses r
+      WHERE r.prompt_id = ${data.promptId}
+    `;
+    const out: Record<number, Engagement> = {};
+    for (const row of rows as Array<{
+      id: number;
+      like_count: unknown;
+      comment_count: unknown;
+      liked: unknown;
+    }>) {
+      out[Number(row.id)] = {
+        likes: Number(row.like_count ?? 0),
+        liked: Boolean(row.liked),
+        comments: Number(row.comment_count ?? 0),
+      };
+    }
+    return out;
+  });
+
 // ---------------------------------------------------------------------------
 // Route
 // ---------------------------------------------------------------------------
@@ -177,23 +374,22 @@ function TodayView() {
 
   const [prompt, setPrompt] = useState<Prompt | null>(null);
   const [responses, setResponses] = useState<ResponseRow[]>([]);
+  const [engagement, setEngagement] = useState<Record<number, Engagement>>({});
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [content, setContent] = useState("");
   const [guestName, setGuestName] = useState<string>("");
+  const [guestId, setGuestId] = useState<string | null>(null);
   const [posting, setPosting] = useState(false);
   const [postError, setPostError] = useState<string | null>(null);
   const [posted, setPosted] = useState(false);
 
-  // Stable guest identity for the session
-  const guestIdRef = useRef<string | null>(null);
-  if (guestIdRef.current === null) {
-    guestIdRef.current =
-      typeof crypto !== "undefined" && "randomUUID" in crypto
-        ? `guest-${crypto.randomUUID().slice(0, 8)}`
-        : `guest-${Math.random().toString(36).slice(2, 10)}`;
-  }
+  // Stable guest identity, remembered across visits (unlike a per-session id,
+  // a persisted id keeps a guest's likes and comments attached to them).
+  useEffect(() => {
+    setGuestId(getOrCreateGuestId());
+  }, []);
 
   // Remember the guest display name across visits
   useEffect(() => {
@@ -205,15 +401,34 @@ function TodayView() {
     }
   }, []);
 
-  // Load prompt + responses on mount
+  const signedInName = user
+    ? user.firstName ||
+      user.username ||
+      user.emailAddresses?.[0]?.emailAddress ||
+      ""
+    : "";
+  const displayName = user ? signedInName : guestName.trim();
+  const userId = user ? user.id : guestId;
+  const clerkUserId = user?.id ?? null;
+
+  // Load prompt + responses + engagement once identity is settled (Clerk
+  // resolves async, and guests need their persisted id first).
   useEffect(() => {
+    if (!isLoaded) return;
+    if (!clerkUserId && !guestId) return;
     (async () => {
       try {
         const p = await getTodayPrompt();
         setPrompt(p);
         if (p) {
-          const rs = await getResponses({ data: { promptId: p.id } });
+          const [rs, eng] = await Promise.all([
+            getResponses({ data: { promptId: p.id } }),
+            getEngagementForPrompt({
+              data: { promptId: p.id, userId: clerkUserId ?? guestId! },
+            }),
+          ]);
           setResponses(rs);
+          setEngagement(eng);
         }
       } catch (err) {
         console.error("Failed to load today's prompt:", err);
@@ -224,18 +439,10 @@ function TodayView() {
         setLoading(false);
       }
     })();
-  }, []);
+  }, [isLoaded, clerkUserId, guestId]);
 
   const wordCount = content.trim() ? content.trim().split(/\s+/).length : 0;
   const overLimit = wordCount > MAX_WORDS;
-
-  const signedInName = user
-    ? user.firstName ||
-      user.username ||
-      user.emailAddresses?.[0]?.emailAddress ||
-      ""
-    : "";
-  const displayName = user ? signedInName : guestName.trim();
 
   const handlePost = useCallback(async () => {
     if (!prompt) return;
@@ -243,12 +450,11 @@ function TodayView() {
     setPostError(null);
     setPosted(false);
     try {
-      const userId = user ? user.id : guestIdRef.current!;
       const authorName = user ? displayName || "Anonymous" : guestName.trim() || "Anonymous";
       await saveResponse({
         data: {
           promptId: prompt.id,
-          userId,
+          userId: userId || "guest",
           authorName,
           content,
         },
@@ -262,16 +468,80 @@ function TodayView() {
       }
       setContent("");
       setPosted(true);
-      // Refresh the day's responses
-      const rs = await getResponses({ data: { promptId: prompt.id } });
+      // Refresh the day's responses + their engagement
+      const [rs, eng] = await Promise.all([
+        getResponses({ data: { promptId: prompt.id } }),
+        getEngagementForPrompt({
+          data: { promptId: prompt.id, userId: userId || "" },
+        }),
+      ]);
       setResponses(rs);
+      setEngagement(eng);
       setTimeout(() => setPosted(false), 4000);
     } catch (err) {
       setPostError(err instanceof Error ? err.message : "Couldn't post. Try again.");
     } finally {
       setPosting(false);
     }
-  }, [prompt, user, displayName, guestName, content]);
+  }, [prompt, user, displayName, guestName, content, userId]);
+
+  const handleToggleLike = useCallback(
+    async (responseId: number) => {
+      if (!userId) return;
+      const current = engagement[responseId];
+      // Optimistic flip — the UI feels instant, and the server confirms below.
+      setEngagement((prev) => ({
+        ...prev,
+        [responseId]: {
+          likes: Math.max(0, (current?.likes ?? 0) + (current?.liked ? -1 : 1)),
+          liked: !current?.liked,
+          comments: current?.comments ?? 0,
+        },
+      }));
+      try {
+        const res = await toggleLike({
+          data: { responseId, userId },
+        });
+        setEngagement((prev) => ({
+          ...prev,
+          [responseId]: {
+            likes: res.count,
+            liked: res.liked,
+            comments: prev[responseId]?.comments ?? 0,
+          },
+        }));
+      } catch (err) {
+        // Revert the optimistic change on failure
+        setEngagement((prev) => ({
+          ...prev,
+          [responseId]: {
+            likes: current?.likes ?? 0,
+            liked: current?.liked ?? false,
+            comments: current?.comments ?? 0,
+          },
+        }));
+        console.error("Like failed:", err);
+      }
+    },
+    [engagement, userId],
+  );
+
+  const handleCommentCountChange = useCallback(
+    (responseId: number, delta: number) => {
+      setEngagement((prev) => {
+        const cur = prev[responseId];
+        return {
+          ...prev,
+          [responseId]: {
+            likes: cur?.likes ?? 0,
+            liked: cur?.liked ?? false,
+            comments: Math.max(0, (cur?.comments ?? 0) + delta),
+          },
+        };
+      });
+    },
+    [],
+  );
 
   if (loading) {
     return (
@@ -420,17 +690,14 @@ function TodayView() {
                 key={r.id}
                 className="rounded-2xl border border-[#3d3929]/10 bg-white p-6 shadow-sm"
               >
-                <div className="flex items-center justify-between gap-3">
-                  <span className="font-sans text-sm font-semibold text-[#3d3929]">
-                    {r.author_name}
-                  </span>
-                  <span className="font-mono text-xs text-[#6b6757]/70">
-                    {r.word_count} words · {formatTime(r.created_at)}
-                  </span>
-                </div>
-                <p className="mt-3 whitespace-pre-wrap font-serif text-[15px] leading-relaxed text-[#3d3929]/90">
-                  {r.content}
-                </p>
+                <ResponseCard
+                  response={r}
+                  engagement={engagement[r.id] ?? { likes: 0, liked: false, comments: 0 }}
+                  currentUserId={userId ?? ""}
+                  currentName={displayName || "Anonymous"}
+                  onToggleLike={() => handleToggleLike(r.id)}
+                  onCommentCountChange={(delta) => handleCommentCountChange(r.id, delta)}
+                />
               </li>
             ))}
           </ul>
@@ -441,12 +708,313 @@ function TodayView() {
 }
 
 // ---------------------------------------------------------------------------
+// ResponseCard — the piece + like/comment engagement
+// ---------------------------------------------------------------------------
+
+function ResponseCard({
+  response,
+  engagement,
+  currentUserId,
+  currentName,
+  onToggleLike,
+  onCommentCountChange,
+}: {
+  response: ResponseRow;
+  engagement: Engagement;
+  currentUserId: string;
+  currentName: string;
+  onToggleLike: () => void;
+  onCommentCountChange: (delta: number) => void;
+}) {
+  const [commentsOpen, setCommentsOpen] = useState(false);
+  const [comments, setComments] = useState<Comment[] | null>(null);
+  const [commentsLoading, setCommentsLoading] = useState(false);
+  const [commentText, setCommentText] = useState("");
+  const [commentError, setCommentError] = useState<string | null>(null);
+  const [commentPosting, setCommentPosting] = useState(false);
+  const [likePending, setLikePending] = useState(false);
+
+  const loadComments = useCallback(async () => {
+    setCommentsLoading(true);
+    try {
+      const cs = await getResponseComments({ data: { responseId: response.id } });
+      setComments(cs);
+    } catch (err) {
+      console.error("Failed to load comments:", err);
+      setCommentError("Couldn't load the notes on this piece.");
+    } finally {
+      setCommentsLoading(false);
+    }
+  }, [response.id]);
+
+  // Toggle the marginalia section; load comments the first time it opens.
+  const openComments = useCallback(() => {
+    setCommentsOpen((open) => {
+      const next = !open;
+      return next;
+    });
+    if (!commentsOpen && comments === null && !commentsLoading) {
+      void loadComments();
+    }
+  }, [commentsOpen, comments, commentsLoading, loadComments]);
+
+  const handleLikeClick = useCallback(async () => {
+    if (likePending || !currentUserId) return;
+    setLikePending(true);
+    try {
+      await onToggleLike();
+    } finally {
+      setLikePending(false);
+    }
+  }, [likePending, currentUserId, onToggleLike]);
+
+  const handleAddComment = useCallback(async () => {
+    const text = commentText.trim();
+    if (!text || commentPosting || !currentUserId) return;
+    setCommentPosting(true);
+    setCommentError(null);
+    try {
+      const c = await commentOnResponse({
+        data: {
+          responseId: response.id,
+          userId: currentUserId,
+          authorName: currentName,
+          content: text,
+        },
+      });
+      setComments((prev) => [...(prev ?? []), c]);
+      setCommentText("");
+      onCommentCountChange(1);
+    } catch (err) {
+      setCommentError(err instanceof Error ? err.message : "Couldn't add your note.");
+    } finally {
+      setCommentPosting(false);
+    }
+  }, [commentText, commentPosting, currentUserId, currentName, response.id, onCommentCountChange]);
+
+  const showCommentCount = engagement.comments > 0 || commentsOpen;
+
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-3">
+        <span className="font-sans text-sm font-semibold text-[#3d3929]">
+          {response.author_name}
+        </span>
+        <span className="font-mono text-xs text-[#6b6757]/70">
+          {response.word_count} words · {formatTime(response.created_at)}
+        </span>
+      </div>
+      <p className="mt-3 whitespace-pre-wrap font-serif text-[15px] leading-relaxed text-[#3d3929]/90">
+        {response.content}
+      </p>
+
+      {/* Engagement row — quiet, bookish, not a social feed */}
+      <div className="mt-4 flex items-center gap-1 border-t border-[#3d3929]/5 pt-3">
+        <button
+          type="button"
+          onClick={handleLikeClick}
+          disabled={!currentUserId || likePending}
+          title={currentUserId ? "Appreciate this piece" : "Sign in or set a name to like"}
+          aria-pressed={engagement.liked}
+          className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-sans text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+            engagement.liked
+              ? "text-[#a6731f]"
+              : "text-[#6b6757]/70 hover:bg-[#f0d78c]/20 hover:text-[#a6731f]"
+          }`}
+        >
+          <HeartIcon filled={engagement.liked} />
+          <span>{engagement.likes}</span>
+          <span className="sr-only">appreciations</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={openComments}
+          aria-expanded={commentsOpen}
+          className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-sans text-xs transition-colors ${
+            commentsOpen
+              ? "text-[#a6731f]"
+              : "text-[#6b6757]/70 hover:bg-[#f0d78c]/20 hover:text-[#a6731f]"
+          }`}
+        >
+          <BubbleIcon />
+          {showCommentCount && <span>{engagement.comments}</span>}
+          <span className={commentsOpen ? "" : "sr-only"}>notes</span>
+        </button>
+      </div>
+
+      {/* Comment section (marginalia) */}
+      {commentsOpen && (
+        <div className="mt-3 rounded-xl border border-[#3d3929]/10 bg-[#fefcf5] px-4 py-3">
+          <div className="flex items-center gap-1.5 text-[#8b6914]">
+            <QuillIcon />
+            <h3 className="font-sans text-[11px] font-semibold uppercase tracking-widest">
+              Marginalia
+            </h3>
+          </div>
+
+          {commentError && !commentsLoading && (
+            <p className="mt-2 font-sans text-xs text-red-600">{commentError}</p>
+          )}
+
+          {commentsLoading ? (
+            <p className="mt-3 font-serif text-sm italic text-[#6b6757]">Reading the notes…</p>
+          ) : comments !== null && comments.length === 0 ? (
+            <p className="mt-3 font-serif text-sm italic text-[#6b6757]">
+              No notes yet — the margin is yours.
+            </p>
+          ) : (
+            <ul className="mt-3 space-y-3">
+              {comments?.map((c) => (
+                <li key={c.id} className="text-sm">
+                  <span className="font-sans text-xs font-semibold text-[#3d3929]">
+                    {c.author_name}
+                  </span>
+                  <span className="ml-2 font-mono text-[10px] text-[#6b6757]/60">
+                    {formatRelativeTime(c.created_at)}
+                  </span>
+                  <p className="mt-0.5 whitespace-pre-wrap font-serif text-sm leading-relaxed text-[#3d3929]/85">
+                    {c.content}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {currentUserId ? (
+            <form
+              className="mt-3 flex items-start gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void handleAddComment();
+              }}
+            >
+              <input
+                type="text"
+                value={commentText}
+                onChange={(e) => setCommentText(e.target.value)}
+                maxLength={MAX_COMMENT_CHARS}
+                placeholder={currentName === "Anonymous" ? "Add a note…" : `Add a note as ${currentName}…`}
+                className="w-full rounded-lg border border-[#3d3929]/15 bg-white px-3 py-2 font-sans text-sm text-[#3d3929] placeholder:text-[#6b6757]/50 focus:border-[#c88c32] focus:outline-none focus:ring-2 focus:ring-[#c88c32]/20"
+              />
+              <button
+                type="submit"
+                disabled={commentPosting || !commentText.trim()}
+                className="shrink-0 rounded-full bg-[#c88c32]/90 px-4 py-2 font-sans text-xs font-semibold text-white transition-colors hover:bg-[#a6731f] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {commentPosting ? "…" : "Add"}
+              </button>
+            </form>
+          ) : (
+            <p className="mt-3 font-sans text-xs text-[#6b6757]/80">
+              Sign in (or set your name above) to leave a note.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Icons — small, stroke-drawn, literary rather than social
+// ---------------------------------------------------------------------------
+
+function HeartIcon({ filled }: { filled: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="h-[15px] w-[15px]"
+      fill={filled ? "currentColor" : "none"}
+      stroke="currentColor"
+      strokeWidth={1.5}
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+    </svg>
+  );
+}
+
+function BubbleIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="h-[15px] w-[15px]"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M21 11.5a8.38 8.38 0 0 1-8.5 8.3c-1.3 0-2.5-.28-3.6-.78L3 20l1.05-5.2A8.38 8.38 0 0 1 11.5 3.2a8.38 8.38 0 0 1 9.5 8.3z" />
+    </svg>
+  );
+}
+
+function QuillIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="h-3.5 w-3.5"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5z" />
+      <path d="M16 8 2 22" />
+      <path d="M17.5 15H9" />
+    </svg>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * A stable guest identity, persisted in localStorage so a guest's likes and
+ * comments stay attached to them across visits. Falls back to a per-session
+ * random id when localStorage is unavailable.
+ */
+function getOrCreateGuestId(): string {
+  try {
+    const existing = localStorage.getItem(GUEST_ID_KEY);
+    if (existing) return existing;
+    const fresh =
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? `guest-${crypto.randomUUID().slice(0, 8)}`
+        : `guest-${Math.random().toString(36).slice(2, 10)}`;
+    localStorage.setItem(GUEST_ID_KEY, fresh);
+    return fresh;
+  } catch {
+    return `guest-${Math.random().toString(36).slice(2, 10)}`;
+  }
+}
 
 /** "2026-08-02T14:03:00Z" -> "14:03" (server time; good enough for MVP). */
 function formatTime(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
   return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+/** Quiet, human times for marginalia: "just now", "2h ago", "Aug 2, 14:03". */
+function formatRelativeTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const diffMs = Date.now() - d.getTime();
+  const mins = Math.floor(diffMs / 60_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days === 1) return "yesterday";
+  if (days < 7) return `${days}d ago`;
+  return d.toLocaleDateString([], { month: "short", day: "numeric" });
 }
