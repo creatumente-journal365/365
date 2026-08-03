@@ -83,7 +83,7 @@ function Nav() {
     <header className="sticky top-0 z-40 border-b border-[#3d3929]/10 bg-[#fefcf5]/90 backdrop-blur-sm">
       <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
         <a href="/" className="font-serif text-lg font-bold tracking-tight text-[#3d3929]">
-          Create Your Mind
+          The Daily Draft
         </a>
         <nav className="hidden items-center gap-8 font-sans text-sm font-medium text-[#6b6757] sm:flex">
           <a href="#how-it-works" className="transition-colors hover:text-[#c88c32]">
@@ -134,7 +134,7 @@ function Hero() {
 
         <p className="mx-auto mt-6 max-w-xl text-lg leading-relaxed text-[#6b6757] sm:text-xl">
           One creative prompt. A few hundred words. A community writing
-          alongside you. Create Your Mind is a warm, low-pressure place to make
+          alongside you. The Daily Draft is a warm, low-pressure place to make
           something real and discover what other people imagined from the same
           starting point.
         </p>
@@ -276,7 +276,7 @@ function CommunityPromise() {
           Human creativity is worth protecting.
         </h2>
         <p className="mt-5 text-lg leading-relaxed text-[#6b6757]">
-          Create Your Mind is not a publishing contest, a critique room, or a
+          The Daily Draft is not a publishing contest, a critique room, or a
           machine-made content feed. It&rsquo;s a place for people to show up,
           experiment, and be surprised by one another. You can write for the joy
           of it, even when you have nothing to prove.
@@ -403,7 +403,7 @@ function Waitlist() {
             )}
             <p className="mt-4 font-sans text-xs text-[#6b6757]">
               No daily marketing emails. Just early access and meaningful updates
-              from Create Your Mind. Unsubscribe anytime.
+              from The Daily Draft. Unsubscribe anytime.
             </p>
           </form>
         )}
@@ -422,7 +422,7 @@ function Footer() {
       <div className="mx-auto flex max-w-4xl flex-col items-center gap-6 text-center sm:flex-row sm:justify-between sm:text-left">
         <div className="max-w-xs">
           <p className="font-serif text-base font-bold text-[#3d3929]">
-            Create Your Mind
+            The Daily Draft
           </p>
           <p className="mt-2 font-sans text-xs leading-relaxed text-[#6b6757]">
             A daily creative writing community for people who want to write,
@@ -455,7 +455,7 @@ function Footer() {
             </a>
           </div>
           <p className="font-sans text-xs text-[#6b6757]/70">
-            &copy; {new Date().getFullYear()} Create Your Mind. Made for human creativity.
+            &copy; {new Date().getFullYear()} The Daily Draft. Made for human creativity.
           </p>
         </div>
       </div>
