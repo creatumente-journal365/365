@@ -92,6 +92,9 @@ function Nav() {
           <a href="#why-join" className="transition-colors hover:text-[#c88c32]">
             Why join
           </a>
+          <Link to="/pricing" className="transition-colors hover:text-[#c88c32]">
+            Pricing
+          </Link>
           <Link
             to="/app"
             className="rounded-full bg-[#c88c32] px-4 py-2 font-semibold text-white shadow-sm transition-all hover:bg-[#a6731f]"
