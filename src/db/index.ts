@@ -40,6 +40,24 @@ export async function setupDatabase(): Promise<void> {
   `;
 
   await db`
+    CREATE TABLE IF NOT EXISTS classrooms (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      teacher_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      code TEXT NOT NULL UNIQUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `;
+  await db`
+    CREATE TABLE IF NOT EXISTS classroom_students (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      classroom_id UUID NOT NULL REFERENCES classrooms(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (classroom_id, name)
+    );
+  `;
+  await db`
     CREATE TABLE IF NOT EXISTS responses (
       id SERIAL PRIMARY KEY,
       prompt_id INTEGER REFERENCES prompts(id),
@@ -50,6 +68,9 @@ export async function setupDatabase(): Promise<void> {
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
   `;
+  // Classroom responses are private; NULL preserves the existing public feed.
+  await db`ALTER TABLE responses ADD COLUMN IF NOT EXISTS classroom_id UUID REFERENCES classrooms(id) ON DELETE SET NULL;`;
+  await db`CREATE INDEX IF NOT EXISTS idx_responses_classroom_id ON responses (classroom_id);`;
 
   // Fast lookup of a day's responses
   await db`
