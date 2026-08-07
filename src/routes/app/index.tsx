@@ -17,6 +17,32 @@ const MAX_WORDS = 500;
 const GUEST_NAME_KEY = "cym_guest_name";
 const GUEST_ID_KEY = "cym_guest_id";
 const MAX_COMMENT_CHARS = 1000;
+const WELCOME_DISMISSED_KEY = "cym_welcome_dismissed";
+
+const WELCOME_COPY = {
+  en: {
+    heading: "Welcome to The Daily Draft",
+    body: "One creative prompt every day. You write up to 500 words, share it, and read what other human minds imagined from the same starting point. No AI, no pressure — just a reason to write.",
+    button: "Got it — show me today's prompt",
+  },
+  es: {
+    heading: "Bienvenido a The Daily Draft",
+    body: "Un ejercicio creativo cada día. Escribe hasta 500 palabras, compártelo y descubre lo que otras mentes imaginaron desde el mismo punto de partida. Sin IA, sin presión — solo una razón para escribir.",
+    button: "Entendido — ver la consigna de hoy",
+  },
+} as const;
+
+/** Pick the welcome copy for the visitor's browser language (default: English). */
+function getWelcomeCopy(): (typeof WELCOME_COPY)["en"] {
+  try {
+    if (typeof navigator !== "undefined" && /^es\b/i.test(navigator.language)) {
+      return WELCOME_COPY.es;
+    }
+  } catch {
+    // navigator unavailable — fall through to English
+  }
+  return WELCOME_COPY.en;
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -395,9 +421,73 @@ function App() {
     <div className="min-h-dvh bg-[#fefcf5]">
       <Header />
       <main className="mx-auto max-w-3xl px-6 py-12">
+        <WelcomeBanner />
         <TodayView />
       </main>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Welcome banner — first-visit greeting, dismissible, remembered in localStorage
+// ---------------------------------------------------------------------------
+
+function WelcomeBanner() {
+  const [dismissed, setDismissed] = useState(false);
+  const [ready, setReady] = useState(false);
+
+  // Read the dismissal flag after mount (localStorage isn't available during
+  // SSR, and reading it in state initializers would cause a hydration flash).
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(WELCOME_DISMISSED_KEY)) setDismissed(true);
+    } catch {
+      // localStorage unavailable — show the banner anyway
+    }
+    setReady(true);
+  }, []);
+
+  if (!ready || dismissed) return null;
+
+  const copy = getWelcomeCopy();
+
+  const dismiss = () => {
+    setDismissed(true);
+    try {
+      localStorage.setItem(WELCOME_DISMISSED_KEY, "1");
+    } catch {
+      // localStorage unavailable — the banner just won't persist
+    }
+  };
+
+  return (
+    <section
+      role="region"
+      aria-label={copy.heading}
+      className="relative mb-12 rounded-2xl border border-[#3d3929]/10 bg-white p-8 shadow-sm sm:p-10"
+    >
+      <button
+        type="button"
+        onClick={dismiss}
+        aria-label="Dismiss welcome message"
+        className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-full font-sans text-xl leading-none text-[#6b6757]/60 transition-colors hover:bg-[#f5f0e3] hover:text-[#3d3929]"
+      >
+        ×
+      </button>
+      <h2 className="pr-10 font-serif text-2xl font-semibold text-[#3d3929]">
+        {copy.heading}
+      </h2>
+      <p className="mt-3 max-w-xl font-sans text-sm leading-relaxed text-[#6b6757] sm:text-base">
+        {copy.body}
+      </p>
+      <button
+        type="button"
+        onClick={dismiss}
+        className="mt-6 inline-flex items-center gap-2 rounded-lg bg-[#c88c32] px-5 py-2.5 font-sans text-sm font-semibold text-white shadow-sm transition-all hover:bg-[#a6731f] hover:shadow-md active:scale-[0.98]"
+      >
+        {copy.button}
+      </button>
+    </section>
   );
 }
 
