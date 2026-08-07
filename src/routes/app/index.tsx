@@ -509,6 +509,14 @@ function Header() {
           >
             Home
           </Link>
+          <SignedIn>
+            <Link
+              to="/app/classrooms"
+              className="hidden font-sans text-sm font-medium text-[#6b6757] transition-colors hover:text-[#c88c32] sm:block"
+            >
+              Classrooms
+            </Link>
+          </SignedIn>
           <NotificationBell />
           <SignedIn>
             <UserButton
