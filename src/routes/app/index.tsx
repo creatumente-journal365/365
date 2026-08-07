@@ -585,6 +585,8 @@ function TodayView() {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [content, setContent] = useState("");
+  const [showNoPasteMessage, setShowNoPasteMessage] = useState(false);
+  const noPasteTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [guestName, setGuestName] = useState<string>("");
   const [guestId, setGuestId] = useState<string | null>(null);
   const [posting, setPosting] = useState(false);
@@ -595,6 +597,13 @@ function TodayView() {
   // a persisted id keeps a guest's likes and comments attached to them).
   useEffect(() => {
     setGuestId(getOrCreateGuestId());
+  }, []);
+
+  // Clear the paste notice timer if the view is unmounted before it expires.
+  useEffect(() => {
+    return () => {
+      if (noPasteTimeoutRef.current) clearTimeout(noPasteTimeoutRef.current);
+    };
   }, []);
 
   // Remember the guest display name across visits
@@ -830,11 +839,26 @@ function TodayView() {
         <textarea
           value={content}
           onChange={(e) => setContent(e.target.value)}
+          onPaste={(e) => {
+            e.preventDefault();
+            setShowNoPasteMessage(true);
+            if (noPasteTimeoutRef.current) clearTimeout(noPasteTimeoutRef.current);
+            noPasteTimeoutRef.current = setTimeout(() => {
+              setShowNoPasteMessage(false);
+              noPasteTimeoutRef.current = null;
+            }, 3000);
+          }}
           rows={10}
           maxLength={4000}
           placeholder="Take it anywhere. Strange, tender, funny, unfinished — all welcome."
           className="mt-4 w-full resize-y rounded-lg border border-[#3d3929]/15 bg-[#fefcf5] px-4 py-3.5 font-serif text-base leading-relaxed text-[#3d3929] placeholder:text-[#6b6757]/40 focus:border-[#c88c32] focus:outline-none focus:ring-2 focus:ring-[#c88c32]/20"
         />
+        <p
+          aria-live="polite"
+          className={`min-h-5 mt-2 font-sans text-sm text-[#c88c32] transition-opacity duration-300 ${showNoPasteMessage ? "opacity-100" : "opacity-0"}`}
+        >
+          Write your own words — pasting is disabled.
+        </p>
 
         <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <span
