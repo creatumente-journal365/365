@@ -10,6 +10,8 @@ export interface Classroom {
   name: string;
   code: string;
   created_at: string;
+  /** Number of students who have joined (0 for a freshly created classroom). */
+  student_count: number;
 }
 
 export interface ClassroomResponse {
@@ -21,6 +23,8 @@ export interface ClassroomResponse {
   content: string;
   word_count: number;
   created_at: string;
+  /** Prompt text for display when grouped by prompt (set by getClassroomResponses). */
+  prompt_text?: string;
 }
 
 function randomCode(): string {
@@ -31,8 +35,20 @@ function randomCode(): string {
   return `${letters}-${digits}`;
 }
 
+/**
+ * Pull the HTTP Request out of a server-function handler ctx. TanStack Start
+ * passes the ctx as a wrapper object ({ request, context, method, ... }) with
+ * the real Request under `ctx.request` — but we defensively accept a bare
+ * Request too, since that shape varies across versions. Clerk's getAuth needs
+ * the actual Request to read the session cookie.
+ */
+function requestFromCtx(ctx: unknown): Request {
+  const maybe = ctx as { request?: unknown } | undefined;
+  return (maybe?.request ?? ctx) as Request;
+}
+
 async function requireTeacher(ctx: unknown): Promise<string> {
-  const auth = await getAuth(ctx as Request);
+  const auth = await getAuth(requestFromCtx(ctx));
   if (!auth.userId) throw new Error("You must be signed in as a teacher.");
   return auth.userId;
 }
@@ -59,7 +75,7 @@ export const createClassroom = createServerFn({ method: "POST" })
         const row = rows[0];
         return {
           id: String(row.id), teacher_id: String(row.teacher_id), name: String(row.name),
-          code: String(row.code), created_at: String(row.created_at),
+          code: String(row.code), created_at: String(row.created_at), student_count: 0,
         } satisfies Classroom;
       } catch (error) {
         if (attempt === 4 || !String(error).toLowerCase().includes("unique")) throw error;
@@ -68,19 +84,53 @@ export const createClassroom = createServerFn({ method: "POST" })
     throw new Error("Could not generate a unique classroom code.");
   });
 
-/** Return classrooms owned by the authenticated Clerk user. */
+/** Return classrooms owned by the authenticated Clerk user, newest first. */
 export const getTeacherClassrooms = createServerFn().handler(async (ctx) => {
   const teacherId = await requireTeacher(ctx);
   const db = sql();
   const rows = await db`
-    SELECT id, teacher_id, name, code, created_at FROM classrooms
-    WHERE teacher_id = ${teacherId} ORDER BY created_at DESC
+    SELECT c.id, c.teacher_id, c.name, c.code, c.created_at,
+           COUNT(cs.id)::int AS student_count
+    FROM classrooms c
+    LEFT JOIN classroom_students cs ON cs.classroom_id = c.id
+    WHERE c.teacher_id = ${teacherId}
+    GROUP BY c.id
+    ORDER BY c.created_at DESC
   `;
   return rows.map((row) => ({
     id: String(row.id), teacher_id: String(row.teacher_id), name: String(row.name),
     code: String(row.code), created_at: String(row.created_at),
+    student_count: Number(row.student_count ?? 0),
   })) satisfies Classroom[];
 });
+
+/** Fetch a single classroom, only if the authenticated user owns it. */
+export const getTeacherClassroom = createServerFn()
+  .validator((data: unknown) => {
+    const d = data as { classroomId?: unknown };
+    const classroomId = String(d?.classroomId ?? "").trim();
+    if (!classroomId) throw new Error("Classroom is required.");
+    return { classroomId };
+  })
+  .handler(async ({ data, ...ctx }) => {
+    const teacherId = await requireTeacher(ctx);
+    const db = sql();
+    const rows = await db`
+      SELECT c.id, c.teacher_id, c.name, c.code, c.created_at,
+             COUNT(cs.id)::int AS student_count
+      FROM classrooms c
+      LEFT JOIN classroom_students cs ON cs.classroom_id = c.id
+      WHERE c.id = ${data.classroomId} AND c.teacher_id = ${teacherId}
+      GROUP BY c.id
+    `;
+    if (!rows.length) throw new Error("Classroom not found.");
+    const row = rows[0];
+    return {
+      id: String(row.id), teacher_id: String(row.teacher_id), name: String(row.name),
+      code: String(row.code), created_at: String(row.created_at),
+      student_count: Number(row.student_count ?? 0),
+    } satisfies Classroom;
+  });
 
 /** Add an accountless student to a classroom by join code. */
 export const joinClassroom = createServerFn({ method: "POST" })
@@ -117,22 +167,44 @@ function classroomInput(data: unknown) {
   return { classroomId, studentId };
 }
 
-/** Read classroom responses only as a member or the owning teacher. */
+/** Read classroom responses — the owning teacher (signed in) or a member student. */
 export const getClassroomResponses = createServerFn()
-  .validator((data: unknown) => ({ ...classroomInput(data) }))
+  .validator((data: unknown) => {
+    const d = data as { classroomId?: unknown; studentId?: unknown };
+    const classroomId = String(d?.classroomId ?? "").trim();
+    const studentId = String(d?.studentId ?? "").trim();
+    if (!classroomId) throw new Error("Classroom is required.");
+    // Teachers (signed in) don't need a student id; accountless students do.
+    return { classroomId, studentId };
+  })
   .handler(async ({ data, ...ctx }) => {
     const db = sql();
-    const auth = await getAuth(ctx as Request);
-    const allowed = auth.userId
-      ? await db`SELECT 1 FROM classrooms WHERE id = ${data.classroomId} AND teacher_id = ${auth.userId}`
-      : await db`SELECT 1 FROM classroom_students WHERE id = ${data.studentId} AND classroom_id = ${data.classroomId}`;
-    if (!allowed.length) throw new Error("You are not a member of this classroom.");
+    const auth = await getAuth(requestFromCtx(ctx));
+    if (auth.userId) {
+      // A signed-in caller must be this classroom's teacher.
+      const owned = await db`
+        SELECT 1 FROM classrooms WHERE id = ${data.classroomId} AND teacher_id = ${auth.userId}
+      `;
+      if (!owned.length) throw new Error("You are not the teacher of this classroom.");
+    } else {
+      // Accountless students identify themselves with their classroom_students id.
+      if (!data.studentId) throw new Error("Student membership is required.");
+      const member = await db`
+        SELECT 1 FROM classroom_students WHERE id = ${data.studentId} AND classroom_id = ${data.classroomId}
+      `;
+      if (!member.length) throw new Error("You are not a member of this classroom.");
+    }
     const rows = await db`
-      SELECT r.id, r.prompt_id, r.classroom_id, r.user_id, r.author_name, r.content, r.word_count, r.created_at
-      FROM responses r WHERE r.classroom_id = ${data.classroomId}
+      SELECT r.id, r.prompt_id, r.classroom_id, r.user_id, r.author_name, r.content, r.word_count, r.created_at,
+             p.prompt_text
+      FROM responses r
+      LEFT JOIN prompts p ON p.id = r.prompt_id
+      WHERE r.classroom_id = ${data.classroomId}
       ORDER BY r.created_at DESC LIMIT 500
     `;
-    return rows.map((row) => ({ id: Number(row.id), prompt_id: Number(row.prompt_id), classroom_id: String(row.classroom_id), user_id: String(row.user_id), author_name: String(row.author_name ?? "Anonymous"), content: String(row.content), word_count: Number(row.word_count ?? 0), created_at: String(row.created_at) })) satisfies ClassroomResponse[];
+    return rows.map((row) => ({
+      id: Number(row.id), prompt_id: Number(row.prompt_id), classroom_id: String(row.classroom_id), user_id: String(row.user_id), author_name: String(row.author_name ?? "Anonymous"), content: String(row.content), word_count: Number(row.word_count ?? 0), created_at: String(row.created_at), prompt_text: String(row.prompt_text ?? "Untitled prompt"),
+    })) satisfies ClassroomResponse[];
   });
 
 /** Submit a classroom response after verifying the accountless student membership. */
